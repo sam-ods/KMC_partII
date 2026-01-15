@@ -256,12 +256,12 @@ class KMC:
         if improved_guess:
             # Setup initial guess (improved)
             rxn,_,site = other_args
-            guess = self._improved_guess(time,random_number,self.E_a[site,rxn],self.A[site,rxn])
+            guess = time+self._improved_guess(time,random_number,self.E_a[site,rxn],self.A[site,rxn])
         else:
             # Setup intial guess (naive)
             a0_t = prop_func(time,*other_args)
             if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
-            guess = -np.log(random_number)/a0_t
+            guess = time-np.log(random_number)/a0_t
         rel_tol = 10**-6
         max_tau = 10 * self.t_max
         if guess > max_tau:
@@ -269,7 +269,7 @@ class KMC:
             self.int_log.append(f'1. Guess greater than max time: Improved={guess_bool}')
             return np.inf # is this needed?
         # Generate A0(t)
-        t_lim = min(time+2*guess,self.t_max)
+        t_lim = min(2*guess,self.t_max)
         sol_prop = solve_ivp(
             fun=lambda tt, y : np.array([prop_func(tt,*other_args)],dtype=float),
             t_span=(time,t_lim),
@@ -279,16 +279,16 @@ class KMC:
             rtol=rel_tol
         )
         # Define functions
-        def f(time_step:float):
-            return float(sol_prop.sol(time+time_step)[0] + np.log(random_number))
-        def fprime(time_step:float):
-            return prop_func(time+time_step,*other_args)
+        def f(new_time:float):
+            return float(sol_prop.sol(new_time)[0] + np.log(random_number))
+        def fprime(new_time:float):
+            return prop_func(new_time,*other_args)
         # Newton method
         try:
             x0 = max(guess,10**-12)
             sol = root_scalar(f,method='newton',x0=x0,fprime=fprime,rtol=rel_tol)
             if sol.converged:
-                return time+sol.root
+                return sol.root
         except Exception:
             pass
         # If Newton method fails use brentq backup
@@ -304,7 +304,7 @@ class KMC:
         sol = root_scalar(f,method='brentq',bracket=[tau_lo,tau_hi],rtol=rel_tol)
         if not sol.converged: raise RuntimeError(f'Both root finding methods failed, check prop_func behaviour (t={time})')
         self.int_log.append(f'3. Newton failed: step={newt_attempt}, Brentq converged: step={sol.root}')
-        return time+sol.root # absolute time of next reaction
+        return sol.root # absolute time of next reaction
     
     def _improved_guess(self,time:float,random_number:float,E_a:float,Pre_exp:float):
         """Michail's improved intial guess for Newton root-finding
