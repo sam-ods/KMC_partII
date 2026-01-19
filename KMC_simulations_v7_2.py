@@ -392,9 +392,7 @@ class KMC:
         return c
     
     def _DM_get_prop_array(sys,c_array,time):
-        a_array = np.multiply(c_array,sys._k_array(time))
-        a_acc = np.cumsum(a_array)
-        return a_acc
+        return np.cumsum(np.multiply(c_array,sys._k_array(time)))
 
     ## FRM funcs ##
     def _FRM_site_prop(
@@ -509,8 +507,6 @@ class KMC:
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
             while t<sys.t_max and n<sys.n_max:
-                # Local occ change
-                c = sys._DM_c_change(lat,c,site,new_site)
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),(c,None),False)
                 # Save state
@@ -538,6 +534,8 @@ class KMC:
                 site = mu_index//len(sys.E_a[0,:])
                 # Advance system state
                 lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn_index,count,adatoms)
+                # Local occ change
+                c = sys._DM_c_change(lat,c,site,new_site)
                 n += 1
             if return_n_steps: print(f'run{run}: n={n}, t={t}')
             # save run data
@@ -623,8 +621,6 @@ class KMC:
             t,n,site,new_site,count=0.0,0,0,0,0
             adatoms = np.sum(lat[:,1])
             while t<sys.t_max and n<sys.n_max:
-                # Local occ change
-                c = sys._DM_c_change(lat,c,site,new_site)
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),(c,None),False)
                 # Advance system time
@@ -638,6 +634,8 @@ class KMC:
                 site = mu_index//len(sys.E_a[0,:])
                 # Advance system state
                 lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn_index,count,adatoms)
+                # Local occ change
+                c = sys._DM_c_change(lat,c,site,new_site)
                 n += 1
             if return_n_steps: print(f'run{run}: n={n}, t={t}')
         return
