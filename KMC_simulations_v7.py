@@ -354,7 +354,7 @@ class KMC:
             c[site,:] = sys._DM_site_c(lattice,site)
         return c
     
-    def _DM_get_prop_array(sys,c_array,a_array,time):
+    def _DM_get_prop_array(sys,c_array,time):
         a_array = np.multiply(c_array,sys._k_array(time))
         a_acc = np.cumsum(a_array)
         return a_array,a_acc
@@ -468,7 +468,6 @@ class KMC:
             #Initialise
             lat = lat_initial.copy()
             c = sys._DM_gen_c_array(lat)
-            a,a_acc = sys._DM_get_prop_array(c,a,0)
             t,n,site,new_site,count,old_count,plot_ind=0.0,0,0,0,0,0,0
             adatoms = np.sum(lat[:,1])
             times = np.array([np.nan]*(sys.t_points))
@@ -495,7 +494,7 @@ class KMC:
                 # Advance system time
                 t = new_t
                 # Global prop gen
-                a,a_acc = sys._DM_get_prop_array(c,a,t)
+                a,a_acc = sys._DM_get_prop_array(c,t)
                 if a_acc[-1] == 0: print('Reactions complete (total_propensity = 0)'); break
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
@@ -582,7 +581,6 @@ class KMC:
             #Initialise
             lat = lat_initial.copy()
             c = sys._DM_gen_c_array(lat)
-            a,a_acc = sys._DM_get_prop_array(c,a,0)
             t,n,site,new_site,count=0.0,0,0,0,0
             adatoms = np.sum(lat[:,1])
             while t<sys.t_max and n<sys.n_max:
@@ -593,7 +591,7 @@ class KMC:
                 # Advance system time
                 t = new_t
                 # Global prop gen
-                a,a_acc = sys._DM_get_prop_array(c,a,t)
+                a,a_acc = sys._DM_get_prop_array(c,t)
                 if a_acc[-1] == 0: print('Reactions complete (total_propensity = 0)'); break
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
@@ -670,3 +668,4 @@ class KMC:
         for row in range(len(built_lat[:,0])):
 
             print(built_lat[row,:])
+
