@@ -151,6 +151,8 @@ class KMC:
         sys.T = Temp_function
         
         # check array dimensions
+        E_a = np.atleast_2d(E_a)
+        Pre_exp = np.atleast_2d(Pre_exp)
         n_site_types = {'ideal':1,'SAA':2,'stepped':3} # SAA
         expect_shape = (n_site_types[sys.lat_type],2+n_site_types[sys.lat_type])
         if np.shape(E_a) != expect_shape:
@@ -666,4 +668,5 @@ class KMC:
         for site,site_type in enumerate(sys.lat[:,0]):
             built_lat[sys._get_coords(site)] = site_labels[site_type] + f'*{adatom_labels[sys.lat[site,1]]}'
         for row in range(len(built_lat[:,0])):
+
             print(built_lat[row,:])
