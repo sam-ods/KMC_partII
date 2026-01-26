@@ -527,7 +527,7 @@ class KMC:
         for run in range(sys.runs):
             lat = lat_initial.copy()
             t,n,count,old_count,plot_ind=0.0,0,0,0,0
-            adatoms = np.sum(lat)
+            adatoms = np.sum(lat[:,1])
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
             # Initialise data structure
@@ -537,7 +537,7 @@ class KMC:
                 if len(sys.FRM_sortlist)==0:print('Reactions complete (reaction queue empty)'); break
                 new_t,index_tup = sys.FRM_sortlist[0]
                 # Save state
-                theta_save = adatoms/lat.size
+                theta_save = adatoms/len(lat[:,1])
                 rate_save = (count-old_count)/(new_t-t) if (new_t-t) != 0 else 0
                 next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
                 while next_save<new_t and plot_ind<sys.t_points:
@@ -668,4 +668,5 @@ class KMC:
         for row in range(len(built_lat[:,0])):
 
             print(built_lat[row,:])
+
 
