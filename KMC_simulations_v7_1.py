@@ -82,7 +82,7 @@ class SimParams:
         sys._bool_build = True
         return
 
-    def set_lat_occ(self,method:str,num_species:int=1,fill_species:int=1,lat_template=np.empty((1,1))):
+    def set_lat_occ(self,method:str,num_species:int,fill_species:int=1,lat_template=np.empty((1,1))):
         """Methods: \n
         1. random \n
         2. saturated \n
@@ -152,8 +152,6 @@ class KMC:
         sys.T = Temp_function
         
         # check array dimensions
-        E_a = np.atleast_2d(E_a)
-        Pre_exp = np.atleast_2d(Pre_exp)
         n_site_types = {'ideal':1,'SAA':2,'stepped':3} # SAA
         expect_shape = (n_site_types[sys.lat_type],2+n_site_types[sys.lat_type])
         if np.shape(E_a) != expect_shape:
@@ -265,7 +263,7 @@ class KMC:
             if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
             guess = time-np.log(random_number)/a0_t
         rel_tol = 10**-6
-        max_tau = 5 * self.t_max
+        max_tau = 10 * self.t_max
         if guess > max_tau:
             guess_bool = ('Y' if improved_guess else 'N')
             self.int_log.append(f'1. Guess greater than max time: Improved={guess_bool}')
@@ -293,9 +291,8 @@ class KMC:
                 return sol.root
         except Exception:
             pass
-        if sol.root > max_tau: return np.inf
         # If Newton method fails use brentq backup
-        newt_attempt = sol.root,sol.flag
+        newt_attempt = sol.root
         tau_lo = 0 if random_number > 0 else -10**-12 
         tau_hi = min(guess,max_tau)
         if f(tau_hi)<0:
@@ -306,7 +303,7 @@ class KMC:
                 if loop_count>60: self.int_log.append('2. Failed to find appropriate bracket') ; return np.inf
         sol = root_scalar(f,method='brentq',bracket=[tau_lo,tau_hi],rtol=rel_tol)
         if not sol.converged: raise RuntimeError(f'Both root finding methods failed, check prop_func behaviour (t={time})')
-        self.int_log.append(f'3. Newton failed: step={newt_attempt[0]}, Brentq converged: step={sol.root}, flag: {newt_attempt[1]}')
+        self.int_log.append(f'3. Newton failed: step={newt_attempt}, Brentq converged: step={sol.root}')
         return sol.root # absolute time of next reaction
     
     def _improved_guess(self,time:float,random_number:float,E_a:float,Pre_exp:float):
@@ -320,7 +317,7 @@ class KMC:
         temp_guess = (E_a/k_B) / (2*lambertw(1/2*np.sqrt((Pre_exp*E_a)/(C*k_B))))
         if np.imag(temp_guess) != 0: return ValueError('Complex valued initial guess!')
         # lambertw returns complex types but k=0 branch is real valued for all z>-1/e so can safely ignore imaginary part
-        return ((temp_guess - sim_temp)/(beta)).real
+        return float((temp_guess - sim_temp)/(beta))
 
     def _rxn_step(sys,lattice:np.ndarray,site:int,rxn_ind:int,event_count:int,adatom_count:int):
         """Updates the lattice according to the chosen reaction \n
@@ -391,8 +388,10 @@ class KMC:
             c[site,:] = sys._DM_site_c(lattice,site)
         return c
     
-    def _DM_get_prop_array(sys,c_array,time):
-        return np.cumsum(np.multiply(c_array,sys._k_array(time)))
+    def _DM_get_prop_array(sys,c_array,a_array,time):
+        a_array = np.multiply(c_array,sys._k_array(time))
+        a_acc = np.cumsum(a_array)
+        return a_array,a_acc
 
     ## FRM funcs ##
     def _FRM_site_prop(
@@ -498,15 +497,19 @@ class KMC:
         """
         data = {}
         lat_initial = sys.lat.copy()
+        a = np.empty((np.shape(sys.E_a)),dtype=float)
         for run in range(sys.runs):
             #Initialise
             lat = lat_initial.copy()
             c = sys._DM_gen_c_array(lat)
+            a,a_acc = sys._DM_get_prop_array(c,a,0)
             t,n,site,new_site,count,old_count,plot_ind=0.0,0,0,0,0,0,0
             adatoms = np.sum(lat[:,1])
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
             while t<sys.t_max and n<sys.n_max:
+                # Local occ change
+                c = sys._DM_c_change(lat,c,site,new_site)
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),(c,None),False)
                 # Save state
@@ -526,7 +529,7 @@ class KMC:
                 # Advance system time
                 t = new_t
                 # Global prop gen
-                a_acc = sys._DM_get_prop_array(c,t)
+                a,a_acc = sys._DM_get_prop_array(c,a,t)
                 if a_acc[-1] == 0: print('Reactions complete (total_propensity = 0)'); break
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
@@ -534,8 +537,6 @@ class KMC:
                 site = mu_index//len(sys.E_a[0,:])
                 # Advance system state
                 lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn_index,count,adatoms)
-                # Local occ change
-                c = sys._DM_c_change(lat,c,site,new_site)
                 n += 1
             if return_n_steps: print(f'run{run}: n={n}, t={t}')
             # save run data
@@ -561,7 +562,7 @@ class KMC:
         for run in range(sys.runs):
             lat = lat_initial.copy()
             t,n,count,old_count,plot_ind=0.0,0,0,0,0
-            adatoms = np.sum(lat[:,1])
+            adatoms = np.sum(lat)
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
             # Initialise data structure
@@ -571,7 +572,7 @@ class KMC:
                 if len(sys.FRM_sortlist)==0:print('Reactions complete (reaction queue empty)'); break
                 new_t,index_tup = sys.FRM_sortlist[0]
                 # Save state
-                theta_save = adatoms/len(lat[:,1])
+                theta_save = adatoms/lat.size
                 rate_save = (count-old_count)/(new_t-t) if (new_t-t) != 0 else 0
                 next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
                 while next_save<new_t and plot_ind<sys.t_points:
@@ -588,7 +589,6 @@ class KMC:
                 t = new_t
                 # Advance state and update queue
                 lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn,count,adatoms)
-                # Local occ change
                 sys._FRM_update(t,site,new_site,lat)
                 n += 1
             if return_n_steps: print(f'run{run}: n={n}, t={t}')
@@ -603,10 +603,6 @@ class KMC:
             data = data | run_data
         return pd.DataFrame(data)
     
-    ##########################
-    ### Benchmarking funcs ###
-    ##########################
-
     def run_DM_no_data(sys,return_n_steps=False):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the Direct method \n
@@ -615,19 +611,23 @@ class KMC:
         'timeX','tempX','thetaX','rateX'
         """
         lat_initial = sys.lat.copy()
+        a = np.empty((np.shape(sys.E_a)),dtype=float)
         for run in range(sys.runs):
             #Initialise
             lat = lat_initial.copy()
             c = sys._DM_gen_c_array(lat)
+            a,a_acc = sys._DM_get_prop_array(c,a,0)
             t,n,site,new_site,count=0.0,0,0,0,0
             adatoms = np.sum(lat[:,1])
             while t<sys.t_max and n<sys.n_max:
+                # Local occ change
+                c = sys._DM_c_change(lat,c,site,new_site)
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),(c,None),False)
                 # Advance system time
                 t = new_t
                 # Global prop gen
-                a_acc = sys._DM_get_prop_array(c,t)
+                a,a_acc = sys._DM_get_prop_array(c,a,t)
                 if a_acc[-1] == 0: print('Reactions complete (total_propensity = 0)'); break
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
@@ -635,7 +635,6 @@ class KMC:
                 site = mu_index//len(sys.E_a[0,:])
                 # Advance system state
                 lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn_index,count,adatoms)
-                c = sys._DM_c_change(lat,c,site,new_site)
                 n += 1
             if return_n_steps: print(f'run{run}: n={n}, t={t}')
         return
