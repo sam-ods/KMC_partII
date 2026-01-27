@@ -561,7 +561,7 @@ class KMC:
         for run in range(sys.runs):
             lat = lat_initial.copy()
             t,n,count,old_count,plot_ind=0.0,0,0,0,0
-            adatoms = np.sum(lat)
+            adatoms = np.sum(lat[:,1])
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
             # Initialise data structure
@@ -571,7 +571,7 @@ class KMC:
                 if len(sys.FRM_sortlist)==0:print('Reactions complete (reaction queue empty)'); break
                 new_t,index_tup = sys.FRM_sortlist[0]
                 # Save state
-                theta_save = adatoms/lat.size
+                theta_save = adatoms/len(lat[:,1])
                 rate_save = (count-old_count)/(new_t-t) if (new_t-t) != 0 else 0
                 next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
                 while next_save<new_t and plot_ind<sys.t_points:
@@ -588,6 +588,7 @@ class KMC:
                 t = new_t
                 # Advance state and update queue
                 lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn,count,adatoms)
+                # Local occ change
                 sys._FRM_update(t,site,new_site,lat)
                 n += 1
             if return_n_steps: print(f'run{run}: n={n}, t={t}')
@@ -634,7 +635,6 @@ class KMC:
                 site = mu_index//len(sys.E_a[0,:])
                 # Advance system state
                 lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn_index,count,adatoms)
-                # Local occ change
                 c = sys._DM_c_change(lat,c,site,new_site)
                 n += 1
             if return_n_steps: print(f'run{run}: n={n}, t={t}')
