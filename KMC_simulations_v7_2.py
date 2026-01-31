@@ -503,6 +503,7 @@ class KMC:
             lat = lat_initial.copy()
             c = sys._DM_gen_c_array(lat)
             t,n,site,new_site,count,old_count,plot_ind=0.0,0,0,0,0,0,0
+            save_state = False
             adatoms = np.sum(lat[:,1])
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
@@ -561,6 +562,7 @@ class KMC:
         for run in range(sys.runs):
             lat = lat_initial.copy()
             t,n,count,old_count,plot_ind=0.0,0,0,0,0
+            save_state = False
             adatoms = np.sum(lat[:,1])
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
@@ -703,4 +705,5 @@ class KMC:
         for site,site_type in enumerate(sys.lat[:,0]):
             built_lat[sys._get_coords(site)] = site_labels[site_type] + f'*{adatom_labels[sys.lat[site,1]]}'
         for row in range(len(built_lat[:,0])):
+
             print(built_lat[row,:])
