@@ -188,18 +188,23 @@ class KMC:
     ### KMC functions ###
     #####################
     
-    def _t_gen(self,prop_func:callable,time:float,random_number:float,other_args:tuple,improved_guess=True):
+    def _t_gen(self,prop_func:callable,time:float,random_number:float,other_args:tuple,**kwargs):
         """Generates a new absolute time from a random time step by solving: \n
         $int_{t}^{t+delta_t}(a0(t,other_args)) + ln(r) == 0$ \n
         Uses newton root-finding method with x0 = -ln(r)/a0(t) \n
         If newton fails resorts to brentq method \n
         Relative tolerance: 10**-6
         """
-        if improved_guess:
-            # Setup initial guess (improved)
-            rxn,_,site = other_args
-            guess = time+self._improved_guess(time,random_number,self.E_a[site,rxn],self.A[site,rxn])
-        else:
+        try:
+            if kwargs['method'] == 'FRM':
+                # Setup improved FRM initial guess
+                rxn,_,site = other_args
+                guess = time+self._FRM_improved_guess(time,random_number,self.E_a[site,rxn],self.A[site,rxn])
+            elif kwargs['method'] == 'DM':
+                # Setup improved FRM initial guess
+                rxn,_,site = other_args
+                guess = time+self._DM_improved_guess(time,random_number,self.E_a[site,rxn],self.A[site,rxn])
+        except: KeyError
             # Setup intial guess (naive)
             a0_t = prop_func(time,*other_args)
             if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
@@ -249,9 +254,9 @@ class KMC:
         self.int_log.append(f'3. Newton failed: step={newt_attempt[0]}, Brentq converged: step={sol.root}, flag: {newt_attempt[1]}')
         return sol.root # absolute time of next reaction
     
-    def _improved_guess(self,time:float,random_number:float,E_a:float,Pre_exp:float):
-        """Michail's improved intial guess for Newton root-finding
-        only applies to linear temperature ramps and time-indpendent Pre-exponential factors
+    def _FRM_improved_guess(self,time:float,random_number:float,E_a:float,Pre_exp:float):
+        """Michail's improved intial guess for Newton root-finding in FRM
+        only applies to linear temperature ramps and time-independent Pre-exponential factors
         """
         sim_temp = self.T(time)
         beta = self.T(1)-self.T(0)
@@ -262,6 +267,35 @@ class KMC:
         # lambertw returns complex types but k=0 branch is real valued for all z>-1/e so can safely ignore imaginary part
         return ((temp_guess - sim_temp)/(beta)).real
 
+    def _DM_improved_guess(self,time:float,random_number:float):
+        """My improved intial guess for Newton root-finding in DM
+        only applies to linear temperature ramps and time-independent Pre-exponential factors
+        """
+        sim_temp = self.T(time)
+        beta = self.T(1)-self.T(0)
+
+        # More complicated than this because only want activated reactions
+        E_a_arr = self.E_a + self.E_BEP
+        Pre_exp_arr = self.A
+        
+        arg_E_a_min = np.argmin(E_a_arr.flat)
+        A_min = Pre_exp_arr.flat[arg_E_a_min]
+        E_a_min = E_a_arr.flat[arg_E_a_min]
+        
+        B_fac , H_fac = 0 , 0
+        for ind,E_a,Pre_exp in zip(range(len(E_a_arr.flat)),E_a_arr.flat,Pre_exp_arr.flat):
+            B_fac += (k_B*sim_temp**2)/E_a * Pre_exp*np.exp(-E_a/(k_B*sim_temp))
+            if ind == arg_E_a_min:
+                H_sep = Pre_exp*k_B*sim_temp**2/E_a * np.exp(-E_a/(k_B*sim_temp))
+            else:
+                H_fac += Pre_exp*k_B*sim_temp**2/E_a * np.exp(-E_a/(k_B*sim_temp))
+        C = (1/(1+H_fac/H_sep)) * E_a_min/(k_B*A_min) * ( beta*np.log(1/random_number) + B_fac )
+    
+        temp_guess = (E_a_min/k_B) / (2*lambertw(1/2*np.sqrt((E_a_min/k_B)**2/C)))
+        if np.imag(temp_guess) != 0: return ValueError('Complex valued initial guess!')
+        # lambertw returns complex types but k=0 branch is real valued for all z>-1/e so can safely ignore imaginary part
+        return ((temp_guess - sim_temp)/(beta)).real
+        
     def _rxn_step(sys,lattice:np.ndarray,site:int,rxn_ind:int,event_count:int,adatom_count:int):
         """Updates the lattice according to the chosen reaction \n
         returns the updated lattice
@@ -651,3 +685,4 @@ class KMC:
             built_lat[sys._get_coords(site)] = site_labels[site_type] + f'*{adatom_labels[lat[site,1]]}'
         for row in range(len(built_lat[:,0])):
             print(built_lat[row,:])
+
