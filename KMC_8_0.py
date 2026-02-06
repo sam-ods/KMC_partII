@@ -72,6 +72,7 @@ class KMC:
         sys.E_BEP = np.empty((len(sys.lat[:,0]),6),dtype=float)
         for site in range(len(sys.lat[:,0])):
             sys._lateral_interactions_update(sys.lat,site,site)
+        print('Setup done!')
 
     def what_params(params,see_lattice=False):
         print(f'Reaction channels = {len(params.E_a[0,:])}')
@@ -288,7 +289,7 @@ class KMC:
         nz_rs,nz_cs = np.nonzero(c_arr)
         E_a_arr = np.empty(len(nz_rs))
         Pre_exp_arr = E_a_arr.copy()
-        for ind,r,c in zip(range(len(E_a_arr,nz_rs,nz_cs))):
+        for ind,r,c in zip(range(len(E_a_arr)),nz_rs,nz_cs):
             E_a_arr[ind] = all_E_a[r,c]
             Pre_exp_arr[ind] = self.A[r,c]
         
