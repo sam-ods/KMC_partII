@@ -11,14 +11,14 @@ from scipy.constants import Boltzmann as k_B
 ## ## ##################### ## ##
 ## ## ##################### ## ##
 class KMC:
-    def __init__(sys,sim_param:dict,E_a:np.ndarray,Pre_exp:np.ndarray,Temp_function:callable,J_NNs_arr:np.ndarray,w_arr:np.ndarray):
+    def __init__(sys,sim_param:dict,E_a:np.ndarray,Pre_exp:np.ndarray,Temp_function:callable,J_dir_arr:np.ndarray,J_diag_arr:np.ndarray,w_arr:np.ndarray):
         """E_a and pre-exponetial required as specific shape (n_site_types,2+n_site_types) \n
         T-dependent pre-exponentials not supported (yet?) \n
         [ads0,des0,diff00,diff01,diff02,...] \n
         [ads1,des1,diff10,diff11,diff12,...] \n
         [ads2,des2,diff20,diff21,diff22,...] \n
         [...] \n
-        Nearest neighbour (2-body) interactions should be passed as a (n_species+1,n_species+1,2) with J[:,:,0] as direct NNs and J[:,:,1] as diagonal NNs \n
+        Nearest neighbour (2-body) interactions should be passed as a (n_species+1,n_species+1) separately for direct and diagonal NNs \n
         Double counting of interactions corrected internally \n
         J_ij == J_ji but will need to access for i->j and j->i interactions \n
         Note J[0,:] and J[:,0] must all be zero to represent absence of neighbour \n
@@ -29,13 +29,12 @@ class KMC:
         [0,J_31,J_32,J_33,...] \n
         [...] \n 
         w should be a (n_site_types,n_rxns) array like E_a \n
-
         """
         sys.rng = np.random.default_rng(sim_param['generator'])
         sys.t_max,sys.n_max,sys.t_step,sys.t_points = sim_param['t_max'],sim_param['n_max'],sim_param['t_step'],sim_param['t_points']
         sys.runs = sim_param['runs']
         sys.lat = sim_param['lattice']
-        sys.lat_type,sys.lat_dimensions = sim_param['lattice_info']
+        sys.lat_type,sys.sys_type,sys.lat_dimensions = sim_param['lattice_info']
         sys.neighbour_key = sim_param['neighbours']
         sys.FRM_sortlist = SortedList(key=lambda tup:tup[0]) # sort list based on first tuple entry (time)
         sys.FRM_id_key = {} # ID -> time
@@ -50,14 +49,14 @@ class KMC:
         Pre_exp = np.atleast_2d(Pre_exp)
         w_arr = np.atleast_2d(w_arr)
         n_site_types = {'ideal':1,'SAA':2,'stepped':3} # SAA
-        expect_shape = (n_site_types[sys.lat_type],2+n_site_types[sys.lat_type])
+        expect_shape = (n_site_types[sys.sys_type],2+n_site_types[sys.sys_type])
         if np.shape(E_a) != expect_shape:
             raise IndexError(f'Actvation energies input wrong, should be {expect_shape} but E_a input is {np.shape(E_a)}')
         if np.shape(E_a) != np.shape(Pre_exp):
             raise IndexError(f'Pre-exp and E_a array dimensions dont match: {np.shape(Pre_exp)} and {np.shape(E_a)}')
         # build base E_a,Pre_exp array
-        sys.E_a = np.empty((len(sys.lat[:,0]),6),dtype=float) # only 6 process: [ads,des,diff+x,diff-x,diff+y,diff-y]
-        sys.A = np.empty((len(sys.lat[:,0]),6),dtype=float) # only 6 process: [ads,des,diff+x,diff-x,diff+y,diff-y]
+        sys.E_a = np.empty((len(sys.lat[:,0]),2+len(sys.neighbour_key[0])),dtype=float) # only 2+len(neighbours) process: [ads,des,diff]
+        sys.A = np.empty((len(sys.lat[:,0]),2+len(sys.neighbour_key[0])),dtype=float) # only 2+len(neighbours) process: [ads,des,diff]
         for site,site_type in enumerate(sys.lat[:,0]):
             sys.E_a[site,0:2] = E_a[site_type,0:2]
             sys.A[site,0:2] = Pre_exp[site_type,0:2]
@@ -66,86 +65,127 @@ class KMC:
                 sys.A[site,2+neigh_ind] = Pre_exp[site_type,2+sys.lat[neigh,0]]
         # build NN coupling matrix and TS factor
         sys.w_BEP = w_arr
-        sys.J_BEP_dir = J_NNs_arr[:,:,0]
-        sys.J_BEP_diag = J_NNs_arr[:,:,1]
+        sys.J_BEP_dir = J_dir_arr # <-------- only nedd one J for 6 NNs
+        sys.J_BEP_diag = J_diag_arr
         # build base BEP contribution to E_a, will be updated each step
-        sys.E_BEP = np.empty((len(sys.lat[:,0]),6),dtype=float)
+        sys.E_BEP = np.empty((len(sys.lat[:,0]),2+len(sys.neighbour_key[0])),dtype=float)
         for site in range(len(sys.lat[:,0])):
             sys._lateral_interactions_update(sys.lat,site,site)
-        print('Setup done!')
 
-    def what_params(params,see_lattice=False):
-        print(f'Reaction channels = {len(params.E_a[0,:])}')
-        print(f'Simulation: t_max={params.t_max}, n_max={params.n_max}, grid_points={params.t_points}, runs={params.runs}')
-        if see_lattice: print(f'Initial lattice:\n{params.lat}')
-    
-    def change_params(sys,**params_to_change):
-        for keyword in params_to_change.keys():
-            setattr(sys,keyword,params_to_change[keyword])
-    
-    def report_logs(sys,clear=True):
-        int_counts = [0,0,0,0,0]
-        for entry in sys.int_log:
-            if entry[0] == '1':
-                int_counts[0] += 1
-            elif entry[0] == '2':
-                int_counts[1] += 1
-            elif entry[0] == '3':
-                int_counts[2] += 1
-        for entry in sys.rxn_log:
-            if entry[0] == '1':
-                int_counts[3] += 1
-            elif entry[0] == '2':
-                int_counts[4] += 1
-        print('t generation errors:')
-        print(f'Intial guess too high = {int_counts[0]}')
-        print(f'Failed to find brentq bracket = {int_counts[1]}')
-        print(f'Newton method failed = {int_counts[2]}')
-        print(f'Null reactions: blocked hop={int_counts[4]}, infinite wait times={int_counts[3]}')
-        if clear: sys.rxn_log,sys.int_log = [],[]
+    ################################
+    ##  System specific functions ##
+    ################################
 
-    def _get_index(grid,location:tuple):
-        row,col = location
-        _,cols = np.shape(grid.lat)
-        return int(col + row*cols)
+    def _rxn_step(sys,lattice:np.ndarray,site:int,rxn_ind:int,counts:np.ndarray)->tuple[int,int,int,tuple]:
+        """Updates the lattice according to the chosen reaction \n
+        returns the updated lattice
+        """
+        rxn_key = {
+            0 : (1,0,site), # adsorption
+            1 : (0,0,site), # desorption
+            2 : (0,1,sys.neighbour_key[site,0]), # hop +x
+            3 : (0,1,sys.neighbour_key[site,1]), # hop -x
+            4 : (0,1,sys.neighbour_key[site,2]), # hop +y
+            5 : (0,1,sys.neighbour_key[site,3]) # hop -y
+        }
+        species,new_species,new_site = rxn_key[rxn_ind]
+        lattice[site,1] = species
+        if new_site != site:
+            lattice[new_site,1] = new_species
+        # Counters
+        if rxn_ind == 0: counts[0] += 1
+        if rxn_ind == 1: counts[0] -= 1 ; counts[1] += 1
+        return lattice,new_site,rxn_ind,counts
     
-    def _get_coords(grid,index:int):
-        _,cols = grid.lat_dimensions
-        return int(index // cols), int(index % cols)
+    def _DM_site_c(
+            sys,
+            lattice:np.ndarray,
+            site:tuple,
+        )->np.ndarray:
+        if int(lattice[site,1]) == 0:
+            c = np.array([1,0,0,0,0,0],dtype=int)
+        elif int(lattice[site,1]) == 1:
+            c = np.array([0,1,0,0,0,0],dtype=int)
+            neighs = sys.neighbour_key[site,:]
+            for ind,neighbour in enumerate(neighs):
+                if int(lattice[neighbour,1]) == 0:
+                    c[2+ind] = 1
+        return c
     
-    #####################################
-    ### FRM_data structure definition ###
-    #####################################
+    def _FRM_site_prop(
+            sys,
+            time:float,
+            rxn:int,
+            lattice:np.ndarray,
+            site:int,
+        )->float:
+        if int(lattice[site,1]) == 0: # adsorption
+            c = 1
+        elif int(lattice[site,1]) == 1:
+            if rxn == 1: # desorption
+                c = 1
+            elif rxn > 1:
+                neigh_rxn = rxn - 2
+                c = 1 - int(lattice[sys.neighbour_key[site,neigh_rxn],1]) # still only applicable to 1 adsorbate
+        k = sys._k(site,rxn,time)
+        return  k*c
+    
+    def _FRM_update(sys,time:float,site:int,new_site:int,lattice:np.ndarray):
+        # This site
+        to_remove = sys.FRM_site_keys[site].copy()
+        for ID in to_remove:
+            sys._FRM_remove(ID)
+        lat_at_site = lattice[site,1]
+        if lat_at_site == 0:
+            t_ads = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(0,lattice,site))
+            sys._FRM_insert(t_ads,ID=(site,0)) # adsorption
+        elif lat_at_site == 1:
+            t_des = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(1,lattice,site))
+            sys._FRM_insert(t_des,ID=(site,1)) # desorption
+            for ind,neigh in enumerate(sys.neighbour_key[site,:]):
+                if lattice[neigh,1] == 0:
+                    t_hop = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(ind+2,lattice,site))
+                    sys._FRM_insert(t_hop,ID=(site,ind+2)) # hops
+        # New_site
+        if new_site != site:
+            to_remove = sys.FRM_site_keys[new_site].copy() #[ID for ID in list(sys.FRM_id_key.keys()) if ID[0] == new_site]
+            for ID in to_remove:
+                sys._FRM_remove(ID)
+            lat_at_new_site = lattice[new_site,1]
+            if lat_at_new_site == 0:
+                t_ads = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(0,lattice,new_site))
+                sys._FRM_insert(t_ads,ID=(new_site,0)) # adsorption
+            elif lat_at_new_site == 1:
+                t_des = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(1,lattice,new_site))
+                sys._FRM_insert(t_des,ID=(new_site,1)) # desorption
+                for ind,neigh in enumerate(sys.neighbour_key[new_site,:]):
+                    if lattice[neigh,1] == 0:
+                        t_hop = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(ind+2,lattice,new_site))
+                        sys._FRM_insert(t_hop,ID=(new_site,ind+2)) # hops
+        # Neighbour sites, only changes hops
+        direction_key = {0:2,1:3,2:0,3:1} # +x<->-x, -y<->+y hops
+        for ind,neigh in enumerate(sys.neighbour_key[site,:]):
+            # remove disabled neighbour events
+            sys._FRM_remove((neigh,direction_key[ind]+2))
+            # add enabled neighbour events if lattice available
+            if lattice[site,1] == 0 and lattice[neigh,1] == 1: # target available and exists an adatom to hop
+                if sys._FRM_site_prop(time,direction_key[ind]+2,lattice,neigh)>0:
+                    t_hop = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(direction_key[ind]+2,lattice,neigh))
+                    sys._FRM_insert(t_hop,ID=(neigh,direction_key[ind]+2)) # neighbours hops
+                else:
+                    sys.rxn_log.append(f'2. Null rxn: t={time} at site={site} rxn={direction_key[ind]+2}')
+        if new_site != site:
+            for ind,neigh in enumerate(sys.neighbour_key[new_site,:]):
+                # removed disabled neighbour events
+                sys._FRM_remove((neigh,direction_key[ind]+2))
 
-    def _FRM_insert(tree,time:float,ID:tuple):
-        if not np.isfinite(time):
-            tree.rxn_log.append(f'1. Null rxn: t={time} ID={ID}')
-            return
-        if ID in tree.FRM_id_key:
-            old_time = tree.FRM_id_key[ID]
-            try:
-                tree.FRM_sortlist.remove((old_time,ID))
-            except Exception:
-                pass
-            tree.FRM_id_key.pop(ID)
-            tree.FRM_site_keys[ID[0]].remove(ID)
-        data = (time,ID)
-        tree.FRM_sortlist.add(data)
-        tree.FRM_id_key[ID] = time
-        tree.FRM_site_keys[ID[0]].append(ID)
-        return
-    
-    def _FRM_remove(tree,ID:tuple):
-        if ID in tree.FRM_id_key:
-            old_time = tree.FRM_id_key.pop(ID)
-            try:
-                tree.FRM_sortlist.remove((old_time,ID))
-                tree.FRM_site_keys[ID[0]].remove(ID)
-            except ValueError:
-                pass
-
+                # add enabled neighbour events if lattice available
+                if lattice[new_site,1] == 0 and lattice[neigh,1] == 1: # target available and exists an adatom to hop
+                    t_hop = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(direction_key[ind]+2,lattice,neigh))
+                    sys._FRM_insert(t_hop,ID=(neigh,direction_key[ind]+2)) # neighbours hops
+        
     ########################################
-    ## BEP lateral interactions functions ##
+    ## BEP lateral interactions functions ## <-------------- also need changed for triangular lattice + multiple sites
     ########################################
 
     def _lateral_interactions_update(sys,lattice:np.ndarray,site:int,new_site:int):
@@ -179,11 +219,42 @@ class KMC:
     def _get_neigh_set(self,site:int): # Only square lattices although triangular simple to adapt
         NN_dir = set() # dont add site or new_site to avoid self interaction
         NN_diag = set()
-        diag_key = {0:3,1:2,2:0,3:1} # clockwise relating each neighbours neighbour to sites diagonal neghbour
+        diag_key = {0:1,1:2,2:3,3:0} # clockwise relating each neighbours neighbour to sites diagonal neighbour
         for index,direct_neigh in enumerate(self.neighbour_key[site,:]):
             NN_dir.add(direct_neigh)
-            NN_diag.add(self.neighbour_key[direct_neigh,diag_key[index]])
+            if self.lat_type == 'square': NN_diag.add(self.neighbour_key[direct_neigh,diag_key[index]])
         return NN_dir,NN_diag
+
+    #####################################
+    ### FRM_data structure definition ###
+    #####################################
+
+    def _FRM_insert(tree,time:float,ID:tuple):
+        if not np.isfinite(time):
+            tree.rxn_log.append(f'1. Null rxn: t={time} ID={ID}')
+            return
+        if ID in tree.FRM_id_key:
+            old_time = tree.FRM_id_key[ID]
+            try:
+                tree.FRM_sortlist.remove((old_time,ID))
+            except Exception:
+                pass
+            tree.FRM_id_key.pop(ID)
+            tree.FRM_site_keys[ID[0]].remove(ID)
+        data = (time,ID)
+        tree.FRM_sortlist.add(data)
+        tree.FRM_id_key[ID] = time
+        tree.FRM_site_keys[ID[0]].append(ID)
+        return
+    
+    def _FRM_remove(tree,ID:tuple):
+        if ID in tree.FRM_id_key:
+            old_time = tree.FRM_id_key.pop(ID)
+            try:
+                tree.FRM_sortlist.remove((old_time,ID))
+                tree.FRM_site_keys[ID[0]].remove(ID)
+            except ValueError:
+                pass
 
     #####################
     ### KMC functions ###
@@ -381,101 +452,23 @@ class KMC:
         return c
     
     def _DM_get_prop_array(sys,c_array,time):
-        a_array = np.multiply(c_array,sys._k_array(time))
-        a_acc = np.cumsum(a_array)
-        return a_acc
+        return np.cumsum(c_array*sys._k_array(time))
 
     ## FRM funcs ##
-    def _FRM_site_prop(
-            sys,
-            time:float,
-            rxn:int,
-            lattice:np.ndarray,
-            site:int,
-        )->float:
-        if int(lattice[site,1]) == 0: # adsorption
-            c = 1
-        elif int(lattice[site,1]) == 1:
-            if rxn == 1: # desorption
-                c = 1
-            elif rxn > 1:
-                neigh_rxn = rxn - 2
-                c = 1 - int(lattice[sys.neighbour_key[site,neigh_rxn],1]) # still only applicable to 1 adsorbate
-        k = sys._k(site,rxn,time)
-        return  k*c
-    
-    def _FRM_generate_queue(sys,guess='FRM'):
+    def _FRM_generate_queue(sys):
         for site in range(len(sys.lat[:,0])):
             if sys.lat[site,1] == 0:
-                t_k = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(0,sys.lat,site),method=guess) # adsorption
+                t_k = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(0,sys.lat,site)) # adsorption
                 sys._FRM_insert(t_k,(site,0))
             elif sys.lat[site,1] == 1:
-                t_k = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(1,sys.lat,site),method=guess) # desorption
+                t_k = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(1,sys.lat,site)) # desorption
                 sys._FRM_insert(t_k,(site,1))
                 for ind,neigh in enumerate(sys.neighbour_key[site,:]):
                     if sys.lat[neigh,1] == 0:
-                        t_k = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(ind+2,sys.lat,site),method=guess)
+                        t_k = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(ind+2,sys.lat,site))
                         sys._FRM_insert(t_k,(site,ind+2))
         return
-    
-    def _FRM_update(sys,time:float,site:int,new_site:int,lattice:np.ndarray,guess='FRM'):
-        # This site
-        to_remove = sys.FRM_site_keys[site].copy()
-        for ID in to_remove:
-            sys._FRM_remove(ID)
-        
-        lat_at_site = lattice[site,1]
-        if lat_at_site == 0:
-            t_ads = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(0,lattice,site),method=guess)
-            sys._FRM_insert(t_ads,ID=(site,0)) # adsorption
-        elif lat_at_site == 1:
-            t_des = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(1,lattice,site),method=guess)
-            sys._FRM_insert(t_des,ID=(site,1)) # desorption
-            for ind,neigh in enumerate(sys.neighbour_key[site,:]):
-                if lattice[neigh,1] == 0:
-                    t_hop = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(ind+2,lattice,site),method=guess)
-                    sys._FRM_insert(t_hop,ID=(site,ind+2)) # hops
-        # New_site
-        if new_site != site:
-            to_remove = sys.FRM_site_keys[new_site].copy() #[ID for ID in list(sys.FRM_id_key.keys()) if ID[0] == new_site]
-            for ID in to_remove:
-                sys._FRM_remove(ID)
 
-            lat_at_new_site = lattice[new_site,1]
-            if lat_at_new_site == 0:
-                t_ads = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(0,lattice,new_site),method=guess)
-                sys._FRM_insert(t_ads,ID=(new_site,0)) # adsorption
-            elif lat_at_new_site == 1:
-                t_des = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(1,lattice,new_site),method=guess)
-                sys._FRM_insert(t_des,ID=(new_site,1)) # desorption
-                for ind,neigh in enumerate(sys.neighbour_key[new_site,:]):
-                    if lattice[neigh,1] == 0:
-                        t_hop = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(ind+2,lattice,new_site),method=guess)
-                        sys._FRM_insert(t_hop,ID=(new_site,ind+2)) # hops
-        # Neighbour sites, only changes hops
-        direction_key = {0:1,1:0,2:3,3:2} # +x<->-x, -y<->+y hops
-        for ind,neigh in enumerate(sys.neighbour_key[site,:]):
-            # remove disabled neighbour events
-            sys._FRM_remove((neigh,direction_key[ind]+2))
-            
-            # add enabled neighbour events if lattice available
-            if lattice[site,1] == 0 and lattice[neigh,1] == 1: # target available and exists an adatom to hop
-                if sys._FRM_site_prop(time,direction_key[ind]+2,lattice,neigh)>0:
-                    t_hop = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(direction_key[ind]+2,lattice,neigh),method=guess)
-                    sys._FRM_insert(t_hop,ID=(neigh,direction_key[ind]+2)) # neighbours hops
-                else:
-                    sys.rxn_log.append(f'2. Null rxn: t={time} at site={site} rxn={direction_key[ind]+2}')
-        if new_site != site:
-            for ind,neigh in enumerate(sys.neighbour_key[new_site,:]):
-                # removed disabled neighbour events
-                sys._FRM_remove((neigh,direction_key[ind]+2))
-
-                # add enabled neighbour events if lattice available
-                if lattice[new_site,1] == 0 and lattice[neigh,1] == 1: # target available and exists an adatom to hop
-                    t_hop = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(direction_key[ind]+2,lattice,neigh),method=guess)
-                    sys._FRM_insert(t_hop,ID=(neigh,direction_key[ind]+2)) # neighbours hops
-        return
-    
     ######################
     ### KMC algortihms ###
     ######################
@@ -493,16 +486,18 @@ class KMC:
             #Initialise
             lat = lat_initial.copy()
             c = sys._DM_gen_c_array(lat)
-            t,n,site,new_site,count,old_count,plot_ind=0.0,0,0,0,0,0,0
+            t,n,site,new_site,plot_ind=0.0,0,0,0,0
             adatoms = np.sum(lat[:,1])
+            counter = np.array([adatoms,0,0]) # [dadatoms,total_desoprtions,last_save_desorptions]
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
+            frames = []
             while t<sys.t_max and n<sys.n_max:
                 # Generate next time
-                new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),(c,None),method=guess)
+                new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),(c,None),False)
                 # Save state
-                theta_save = adatoms/len(lat[:,1])
-                rate_save = (count-old_count)/(new_t-t) if (new_t-t) != 0 else 0
+                theta_save = counter[0]/len(lat[:,1])
+                rate_save = (counter[1]-counter[2])/(new_t-t) if (new_t-t) != 0 else 0
                 next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
                 while next_save<new_t and plot_ind<sys.t_points:
                     save_state = True
@@ -511,9 +506,10 @@ class KMC:
                     rates[plot_ind] = rate_save
                     times[plot_ind] = next_save
                     temps[plot_ind] = sys.T(next_save)
+                    if view_lattice: frames.append(lat.copy())
                     next_save += sys.t_step # next time to save
                     plot_ind += 1 # next grid point
-                if save_state: old_count = count; save_state=False # reset counts
+                if save_state: counter[2] = counter[1]; save_state=False # reset counts
                 # Advance system time
                 t = new_t
                 # Global prop gen
@@ -524,7 +520,7 @@ class KMC:
                 rxn_index = mu_index % len(sys.E_a[0,:])
                 site = mu_index//len(sys.E_a[0,:])
                 # Advance system state
-                lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn_index,count,adatoms)
+                lat,new_site,last_rxn,counter = sys._rxn_step(lat,site,rxn_index,counter)
                 # Local occ and lateral interactions change
                 c = sys._DM_c_change(lat,c,site,new_site)
                 sys._lateral_interactions_update(lat,site,new_site)
@@ -552,19 +548,20 @@ class KMC:
         lat_initial = sys.lat.copy()
         for run in range(sys.runs):
             lat = lat_initial.copy()
-            t,n,count,old_count,plot_ind=0.0,0,0,0,0
+            t,n,plot_ind=0.0,0,0
             adatoms = np.sum(lat[:,1])
+            counter = np.array([adatoms,0,0]) # [adatoms,total_desoprtions,last_save_desorptions]
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
             # Initialise data structure
-            sys._FRM_generate_queue(guess)
+            sys._FRM_generate_queue()
             while t<sys.t_max and n<sys.n_max:
                 # Choose reaction and time
                 if len(sys.FRM_sortlist)==0:print('Reactions complete (reaction queue empty)'); break
                 new_t,index_tup = sys.FRM_sortlist[0]
                 # Save state
-                theta_save = adatoms/len(lat[:,1])
-                rate_save = (count-old_count)/(new_t-t) if (new_t-t) != 0 else 0
+                theta_save = counter[0]/len(lat[:,1])
+                rate_save = (counter[1]-counter[2])/(new_t-t) if (new_t-t) != 0 else 0
                 next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
                 while next_save<new_t and plot_ind<sys.t_points:
                     save_state = True
@@ -575,15 +572,15 @@ class KMC:
                     temps[plot_ind] = sys.T(next_save)
                     next_save += sys.t_step # next time to save
                     plot_ind += 1 # next grid point
-                if save_state: old_count = count; save_state=False # reset counts
+                if save_state: counter[2] = counter[1]; save_state=False # reset counts
                 site,rxn = index_tup
                 t = new_t
                 # Advance state and update queue + lateral interactions
-                lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn,count,adatoms)
-                sys._FRM_update(t,site,new_site,lat,guess)
+                lat,new_site,last_rxn,counter = sys._rxn_step(lat,site,rxn,counter)
+                sys._FRM_update(t,site,new_site,lat)
                 sys._lateral_interactions_update(lat,site,new_site)
                 n += 1
-            if report: print(f'run{run}: n={n}, t={t}')
+            if return_n_steps: print(f'run{run}: n={n}, t={t}')
             # save run data
             run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}']
             run_data = {
@@ -698,4 +695,3 @@ class KMC:
             built_lat[sys._get_coords(site)] = site_labels[site_type] + f'*{adatom_labels[lat[site,1]]}'
         for row in range(len(built_lat[:,0])):
             print(built_lat[row,:])
-
