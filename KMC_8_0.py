@@ -43,8 +43,8 @@ class KMC:
         print(f'Intialising {sys.lat_type} lattice system on a {sys.lat_dimensions} supercell')
         
         sys.T = Temp_function
-
-        # check array dimensions -> currently only square lattice
+        
+        # check array dimensions
         E_a = np.atleast_2d(E_a)
         Pre_exp = np.atleast_2d(Pre_exp)
         w_arr = np.atleast_2d(w_arr)
@@ -260,27 +260,42 @@ class KMC:
     ### KMC functions ###
     #####################
     
-    def _t_gen(self,prop_func:callable,time:float,random_number:float,other_args:tuple,improved_guess=True):
+    def _t_gen(self,prop_func:callable,time:float,random_number:float,other_args:tuple,**kwargs):
         """Generates a new absolute time from a random time step by solving: \n
         $int_{t}^{t+delta_t}(a0(t,other_args)) + ln(r) == 0$ \n
         Uses newton root-finding method with x0 = -ln(r)/a0(t) \n
+        Uses intial guess method according to method kwarg: \n
+            1. method='DM' 2. method='FRM' 3. method='TI' (default if no kwarg) \n
         If newton fails resorts to brentq method \n
         Relative tolerance: 10**-6
         """
-        if improved_guess:
-            # Setup initial guess (improved)
-            rxn,_,site = other_args
-            guess = time+self._improved_guess(time,random_number,self.E_a[site,rxn],self.A[site,rxn])
-        else:
+        try:
+            if kwargs['method'] == 'FRM':
+                # Setup improved FRM initial guess
+                rxn,_,site = other_args
+                guess = time+self._FRM_improved_guess(time,random_number,self.E_a[site,rxn],self.A[site,rxn])
+            elif kwargs['method'] == 'DM':
+                # Setup improved FRM initial guess
+                c,_ = other_args
+                guess = time+self._DM_improved_guess(time,random_number,c)
+            elif kwargs['method'] == 'TI':
+                a0_t = prop_func(time,*other_args)
+                if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
+                guess = time-np.log(random_number)/a0_t
+        except KeyError:
             # Setup intial guess (naive)
             a0_t = prop_func(time,*other_args)
             if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
             guess = time-np.log(random_number)/a0_t
+        
         rel_tol = 10**-6
         max_tau = 5 * self.t_max
         if guess > max_tau:
-            guess_bool = ('Y' if improved_guess else 'N')
-            self.int_log.append(f'1. Guess greater than max time: Improved={guess_bool}')
+            try:
+                guess_method = kwargs['method']
+            except KeyError:
+                guess_method = 'TI'
+            self.int_log.append(f'1. Guess greater than max time: Method={guess_method}')
             return np.inf # is this needed?
         # Generate A0(t)
         t_lim = min(2*guess,self.t_max)
@@ -321,9 +336,9 @@ class KMC:
         self.int_log.append(f'3. Newton failed: step={newt_attempt[0]}, Brentq converged: step={sol.root}, flag: {newt_attempt[1]}')
         return sol.root # absolute time of next reaction
     
-    def _improved_guess(self,time:float,random_number:float,E_a:float,Pre_exp:float):
-        """Michail's improved intial guess for Newton root-finding
-        only applies to linear temperature ramps and time-indpendent Pre-exponential factors
+    def _FRM_improved_guess(self,time:float,random_number:float,E_a:float,Pre_exp:float):
+        """Michail's improved intial guess for Newton root-finding in FRM
+        only applies to linear temperature ramps and time-independent Pre-exponential factors
         """
         sim_temp = self.T(time)
         beta = self.T(1)-self.T(0)
@@ -334,15 +349,85 @@ class KMC:
         # lambertw returns complex types but k=0 branch is real valued for all z>-1/e so can safely ignore imaginary part
         return ((temp_guess - sim_temp)/(beta)).real
 
+    def _DM_improved_guess(self,time:float,random_number:float,c_arr:np.ndarray):
+        """My improved intial guess for Newton root-finding in DM
+        only applies to linear temperature ramps and time-independent Pre-exponential factors
+        """
+        sim_temp = self.T(time)
+        beta = self.T(1)-self.T(0)
+
+        all_E_a = (self.E_a + self.E_BEP)
+        nz_rs,nz_cs = np.nonzero(c_arr)
+        E_a_arr = np.empty(len(nz_rs))
+        Pre_exp_arr = E_a_arr.copy()
+        for ind,r,c in zip(range(len(E_a_arr)),nz_rs,nz_cs):
+            E_a_arr[ind] = all_E_a[r,c]
+            Pre_exp_arr[ind] = self.A[r,c]
+        
+        arg_E_a_min = np.argmin(E_a_arr)
+        A_min = Pre_exp_arr[arg_E_a_min]
+        E_a_min = E_a_arr[arg_E_a_min]
+        
+        B_fac , H_fac = 0 , 0
+        for ind,E_a,Pre_exp in zip(range(len(E_a_arr.flat)),E_a_arr,Pre_exp_arr):
+            B_fac += (k_B*sim_temp**2)/E_a * Pre_exp*np.exp(-E_a/(k_B*sim_temp))
+            if ind == arg_E_a_min:
+                H_sep = Pre_exp*k_B*sim_temp**2/E_a * np.exp(-E_a/(k_B*sim_temp))
+            else:
+                H_fac += Pre_exp*k_B*sim_temp**2/E_a * np.exp(-E_a/(k_B*sim_temp))
+        C = (1/(1+H_fac/H_sep)) * E_a_min/(k_B*A_min) * ( beta*np.log(1/random_number) + B_fac )
+    
+        temp_guess = (E_a_min/k_B) / (2*lambertw(1/2*np.sqrt((E_a_min/k_B)**2/C)))
+        if np.imag(temp_guess) != 0: return ValueError('Complex valued initial guess!')
+        # lambertw returns complex types but k=0 branch is real valued for all z>-1/e so can safely ignore imaginary part
+        return ((temp_guess - sim_temp)/(beta)).real
+        
+    def _rxn_step(sys,lattice:np.ndarray,site:int,rxn_ind:int,event_count:int,adatom_count:int):
+        """Updates the lattice according to the chosen reaction \n
+        returns the updated lattice
+        """
+        # the actual forms of the process are the same, its the propensities that differ i think
+        rxn_key = {
+            0 : (1,0,site), # adsorption
+            1 : (0,0,site), # desorption
+            2 : (0,1,sys.neighbour_key[site,0]), # hop +x
+            3 : (0,1,sys.neighbour_key[site,1]), # hop -x
+            4 : (0,1,sys.neighbour_key[site,2]), # hop +y
+            5 : (0,1,sys.neighbour_key[site,3]) # hop -y
+        }
+        species,new_species,new_site = rxn_key[rxn_ind]
+        lattice[site,1] = species
+        if new_site != site:
+            lattice[new_site,1] = new_species
+        # Counters
+        if rxn_ind == 0: adatom_count += 1
+        if rxn_ind == 1: adatom_count -= 1 ; event_count += 1
+        return lattice,new_site,event_count,adatom_count
+
     def _k(sys,site:int,rxn:int,time:float)->np.ndarray:
-        return sys.A[site,rxn]*np.exp(-(sys.E_a[site,rxn]+sys.E_BEP[site,rxn])/(k_B*sys.T(time)))
+        return np.multiply(sys.A[site,rxn],np.exp(-(sys.E_a[site,rxn]+sys.E_BEP[site,rxn])/(k_B*sys.T(time))))
     
     ## DM funcs ##
     def _k_array(sys,time):
-        return sys.A*np.exp(-(sys.E_a+sys.E_BEP)/(k_B*sys.T(time)))
+        return np.multiply(sys.A,np.exp(-(sys.E_a+sys.E_BEP)/(k_B*sys.T(time))))
 
     def _DM_total_prop(sys,time:float,c_arr:np.ndarray,dummy=None)->float:
-        return np.sum(sys._k_array(time)*c_arr)
+        return np.sum(np.multiply(sys._k_array(time),c_arr))
+        
+    def _DM_site_c(
+            sys,
+            lattice:np.ndarray,
+            site:tuple,
+        )->np.ndarray:
+        if int(lattice[site,1]) == 0:
+            c = np.array([1,0,0,0,0,0],dtype=int)
+        elif int(lattice[site,1]) == 1:
+            c = np.array([0,1,0,0,0,0],dtype=int)
+            neighs = sys.neighbour_key[site,:]
+            for ind,neighbour in enumerate(neighs):
+                if int(lattice[neighbour,1]) == 0:
+                    c[2+ind] = 1
+        return c
     
     def _DM_c_change(
             sys,
@@ -388,7 +473,7 @@ class KMC:
     ### KMC algortihms ###
     ######################
 
-    def run_DM(sys,report=False,view_lattice=False):
+    def run_DM(sys,guess='TI',report=False):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the Direct method \n
         Returns a dict of time, temp, coverage and desorption rate \n
@@ -450,10 +535,9 @@ class KMC:
                 run_label[3]:rates
             }
             data = data | run_data
-        if view_lattice: return data,frames
-        else: return data
+        return data
     
-    def run_FRM(sys,return_n_steps=False):
+    def run_FRM(sys,guess='FRM',report=False):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the First reaction method \n
         Returns a dict of time, temp, coverage and desorption rate \n
@@ -466,7 +550,7 @@ class KMC:
             lat = lat_initial.copy()
             t,n,plot_ind=0.0,0,0
             adatoms = np.sum(lat[:,1])
-            counter = np.array([adatoms,0,0]) # [dadatoms,total_desoprtions,last_save_desorptions]
+            counter = np.array([adatoms,0,0]) # [adatoms,total_desoprtions,last_save_desorptions]
             times = np.array([np.nan]*(sys.t_points))
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
             # Initialise data structure
@@ -512,7 +596,7 @@ class KMC:
     ### Benchmarking funcs ###
     ##########################
 
-    def run_DM_no_data(sys,return_n_steps=False):
+    def run_DM_no_data(sys,guess='TI'):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the Direct method \n
         Returns a (4*runs) column dataframe of time, temp, coverage and desorption rate \n
@@ -528,7 +612,7 @@ class KMC:
             adatoms = np.sum(lat[:,1])
             while t<sys.t_max and n<sys.n_max:
                 # Generate next time
-                new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),(c,None),False)
+                new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),(c,None),method=guess)
                 # Advance system time
                 t = new_t
                 # Global prop gen
@@ -544,10 +628,9 @@ class KMC:
                 c = sys._DM_c_change(lat,c,site,new_site)
                 sys._lateral_interactions_update(lat,site,new_site)
                 n += 1
-            if return_n_steps: print(f'run{run}: n={n}, t={t}')
         return
     
-    def run_FRM_no_data(sys,return_n_steps=False):
+    def run_FRM_no_data(sys,guess='FRM'):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the First reaction method \n
         Returns a 4*runs column dataframe of time, temp, coverage and desorption rate \n
@@ -560,7 +643,7 @@ class KMC:
             t,n,count=0.0,0,0
             adatoms = np.sum(lat)
             # Initialise data structure
-            sys._FRM_generate_queue()
+            sys._FRM_generate_queue(guess)
             while t<sys.t_max and n<sys.n_max:
                 # Choose reaction and time
                 if len(sys.FRM_sortlist)==0:print('Reactions complete (reaction queue empty)'); break
@@ -569,10 +652,9 @@ class KMC:
                 t = new_t
                 # Advance state and update queue + lateral interactions
                 lat,new_site,count,adatoms = sys._rxn_step(lat,site,rxn,count,adatoms)
-                sys._FRM_update(t,site,new_site,lat)
+                sys._FRM_update(t,site,new_site,lat,guess)
                 sys._lateral_interactions_update(lat,site,new_site)
                 n += 1
-            if return_n_steps: print(f'run{run}: n={n}, t={t}')
         return
 
     ##################
@@ -613,47 +695,3 @@ class KMC:
             built_lat[sys._get_coords(site)] = site_labels[site_type] + f'*{adatom_labels[lat[site,1]]}'
         for row in range(len(built_lat[:,0])):
             print(built_lat[row,:])
-
-    ###########################
-    ##  sys info / utilities ##
-    ###########################
-
-    def what_params(params,see_lattice=False):
-        print(f'Reaction channels = {len(params.E_a[0,:])}')
-        print(f'Simulation: t_max={params.t_max}, n_max={params.n_max}, grid_points={params.t_points}, runs={params.runs}')
-        if see_lattice: print(f'Initial lattice:\n{params.lat}')
-    
-    def change_params(sys,**params_to_change):
-        for keyword in params_to_change.keys():
-            setattr(sys,keyword,params_to_change[keyword])
-    
-    def report_logs(sys,clear=True):
-        int_counts = [0,0,0,0,0]
-        for entry in sys.int_log:
-            if entry[0] == '1':
-                int_counts[0] += 1
-            elif entry[0] == '2':
-                int_counts[1] += 1
-            elif entry[0] == '3':
-                int_counts[2] += 1
-        for entry in sys.rxn_log:
-            if entry[0] == '1':
-                int_counts[3] += 1
-            elif entry[0] == '2':
-                int_counts[4] += 1
-        print('t generation errors:')
-        print(f'Intial guess too high = {int_counts[0]}')
-        print(f'Failed to find brentq bracket = {int_counts[1]}')
-        print(f'Newton method failed = {int_counts[2]}')
-        print(f'Null reactions: blocked hop={int_counts[4]}, infinite wait times={int_counts[3]}')
-        if clear: sys.rxn_log,sys.int_log = [],[]
-
-    def _get_index(grid,location:tuple):
-        row,col = location
-        _,cols = np.shape(grid.lat)
-        return int(col + row*cols)
-    
-    def _get_coords(grid,index:int):
-        _,cols = grid.lat_dimensions
-        return int(index // cols), int(index % cols)
-    
