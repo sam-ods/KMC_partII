@@ -25,9 +25,10 @@ class SimParams:
         1. Ideal = flat, square lattice, one site type \n
         2. SAA = flat, square lattice, two site types -> attr = density, default is 1 dopant in supercell \n
         3. Stepped = square lattice with single step, three site types -> attr = step location, default is middle of supercell \n
-        Lattices:
-        1. Square (100) -> 4 nearest neighbours
-        2. Triangular (111) -> 6 nearest neighbours
+        Lattices: \n
+        1. Square (100) -> 4 nearest neighbours \n
+        2. Triangular (111) -> 6 nearest neighbours \n
+        Imposes helical boundary conditions - see Newman, Barkema (1999)
         """
         if system_type.upper() == 'SAA':
             system_type = system_type.upper()
@@ -37,7 +38,7 @@ class SimParams:
             sites = int(sys.lat[:,0].size)
             dopants = math.floor(sites*density)
             if dopants < 1: raise ValueError('dopant too dilute for supercell, try including more sites')
-            dope_sites = sys.rng.choice(range(sites),size=dopants,replace=False) # are they really randomly distributed?
+            dope_sites = sys.rng.choice(range(sites),size=dopants,replace=False)
             for site in dope_sites: sys.lat[site,0] = 1 # 1 represents dopant and 0 represents host
         elif system_type.lower() == 'stepped':
             system_type = system_type.lower()
@@ -54,57 +55,43 @@ class SimParams:
         sys.sys_type = system_type
         # Neighbour key
         sites = sys.lat[:,0].size
-        rows,cols = sys.lat_dimensions
-        def _get_index(location:tuple):
-            row,col = location
-            _,cols = sys.lat_dimensions
-            return int(col + row*cols)
-        def _get_coords(index:int):
-            _,cols = sys.lat_dimensions
-            return int(index // cols), int(index % cols)
         if lattice_type.lower() == 'square':
             sys.neigh_key = np.empty((sys.lat[:,0].size,4),dtype=int)
             # neighs 1-4 from site 0, starting top
             #
-            #         1
+            #         0
             #         |
-            #     4---0---2
+            #     3---i---1
             #         |
-            #         3
+            #         2
             #
             for site_index in range(sites):
-                row,col = _get_coords(site_index)
+                _,L = sys.lat_dimensions
                 sys.neigh_key[site_index,:] = [
-                    _get_index(((row-1),col)) if row!=0 else _get_index((rows-1,col)), # +y
-                    _get_index((row,(col+1)%cols)), # +x
-                    _get_index(((row+1)%rows,col)), # -y
-                    _get_index((row,col-1)) if col!=0 else _get_index((row,cols-1)) # -x
+                    (site_index-L)%sites, # 0 = +y
+                    (site_index+1)%sites, # 1 = +x
+                    (site_index+L)%sites, # 2 = -y
+                    (site_index-1)%sites # 3 = -x
                 ]
         elif lattice_type.lower() == 'triangular':
             sys.neigh_key = np.empty((sys.lat[:,0].size,6),dtype=int)
             # neighs 1-6 from site 0, starting top left
             #
-            #       1---2
+            #       0---1
             #      /     \
-            #     6   0   3
+            #     5   i   2
             #      \     /
-            #       5---4
+            #       4---3
             #
             for site_index in range(sites):
-                row,col = _get_coords(site_index)
-                if row == 0:
-                    site1_row = rows-1
-                if col == 0:
-                    site1_col = cols-1
-                else:
-                    site1_row,site1_col = row-1,col-1
+                _,L = sys.lat_dimensions
                 sys.neigh_key[site_index,:] = [
-                    _get_index((site1_row,site1_col)), # 1
-                    _get_index(((row-1),col)) if row!=0 else _get_index((rows-1,col)), # 2
-                    _get_index((row,(col+1)%cols)), # 3
-                    _get_index(((row+1)%rows,(col+1)%cols)), # 4
-                    _get_index(((row+1)%rows,col)), # 5
-                    _get_index((row,(col-1))) if col!=0 else _get_index((row,cols-1)) # 6
+                    (site_index-L-1)%sites, # 0
+                    (site_index-L)%sites, # 1
+                    (site_index+1)%sites, # 2
+                    (site_index+L+1)%sites, # 3
+                    (site_index+L)%sites, # 4
+                    (site_index-1)%sites # 5
                 ]
         else: raise ValueError('unrecognised lattice type, check spelling')
         sys.lat_type = lattice_type
@@ -112,24 +99,44 @@ class SimParams:
         sys._bool_build = True
         return
 
-    def set_lat_occ(self,method:str,num_species:int=1,fill_species:int=1,lat_template=np.empty((1,1))):
+    def set_lat_occ(self,method:str,lat_template=np.empty((1,1)),**kwargs):
         """Methods: \n
-        1. random \n
-        2. saturated \n
-        3. custom (note need to supply site types as well)
+        1. random (needs a num_species kwarg)\n
+        2. saturated (needs a fill_species kwarg)\n
+        3. custom (note need to supply site types as well) \n
+        4. many species (need to supply a {species:coverage} dict as 'theta_key' kwarg)\n
+        Make sure this key is consistent with the KMC reaction species identities \n
+        Many species method populates lattice randomly according to distribution supplied, so will be subject to some variation depending on lattice size
         """
-        if method == 'random':
+        if method.lower() == 'random':
+            num_species = kwargs['num_species']
             for site in range(math.prod(self.lat_dimensions)):
                 self.lat[site,1] = self.rng.integers(0,num_species,endpoint=True)
-        if method == 'saturated':
+
+        if method.lower() == 'saturated':
+            fill_species = kwargs['fill_species']
             if fill_species>num_species: raise ValueError('Invalid fill species given')
             self.lat[:,1] = np.full((self.lat[:,1].size),fill_value=fill_species,dtype=int)
             method += f'({fill_species})'
-        if method == 'empty':
+
+        if method.lower() == 'empty':
             self.lat[:,1] = np.zeros((self.lat[:,1].size),dtype=int)
-        if method == 'custom':
+
+        if method.lower() == 'custom':
             if self.lat.shape != lat_template.shape: raise ValueError(f'Lattice supplied is wrong dimensions, should be: {self.lat.shape}')
             self.lat = lat_template
+
+        if method.lower() == 'many species':
+            theta_key = dict(kwargs['theta_key'])
+            if sum(theta_key.values()) != 1: raise ValueError('Total fractional coverage must be 1, note the empty site coverage is also required')
+            species_dist = np.empty((len(theta_key)))
+            for species in theta_key.keys():
+                species_dist[species] = theta_key[species]
+            species_dist = np.cumsum(species_dist)
+            for site in range(math.prod(self.lat_dimensions)):
+                adatom = np.searchsorted(species_dist,self.rng.uniform())
+                self.lat[site,1] = adatom
+        
         self.lat_occ = method
         print(f'Lattice populated according to {method} occupancy')
         return 
