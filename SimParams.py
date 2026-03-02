@@ -115,7 +115,6 @@ class SimParams:
 
         if method.lower() == 'saturated':
             fill_species = kwargs['fill_species']
-            if fill_species>num_species: raise ValueError('Invalid fill species given')
             self.lat[:,1] = np.full((self.lat[:,1].size),fill_value=fill_species,dtype=int)
             method += f'({fill_species})'
 
@@ -129,7 +128,7 @@ class SimParams:
         if method.lower() == 'many species':
             theta_key = dict(kwargs['theta_key'])
             if sum(theta_key.values()) != 1: raise ValueError('Total fractional coverage must be 1, note the empty site coverage is also required')
-            species_dist = np.empty((len(theta_key)))
+            species_dist = np.empty((max(theta_key.keys())+1))
             for species in theta_key.keys():
                 species_dist[species] = theta_key[species]
             species_dist = np.cumsum(species_dist)
@@ -144,6 +143,17 @@ class SimParams:
     def what_lat_occ(self,see_lattice=False):
         if see_lattice: print(f'Initial lattice:\n{self.lat}')
         return print(f'Lattice occupancy: {self.lat_occ}')
+    
+    def what_coverages(self):
+        max_id = max(self.lat[:,1])+1
+        counts = np.zeros((max_id),dtype=int)
+        for site in self.lat[:,1]:
+            counts[site] += 1
+        counts = counts/len(self.lat[:,1])
+        thetas = {i:counts[i] for i in range(max_id)}
+        print('{Species : fractional coverage} key is ...')
+        print(thetas)
+    
 
     def to_KMC(self):
         if not self._bool_build: raise AttributeError('Latttice not built!')
