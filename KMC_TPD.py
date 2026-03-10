@@ -1,6 +1,6 @@
 import numpy as np
 from sortedcontainers.sortedlist import SortedList
-from scipy.integrate import solve_ivp
+from scipy.integrate import fixed_quad
 from scipy.optimize import root_scalar
 from scipy.special import lambertw
 from scipy.constants import Boltzmann as k_B
@@ -84,7 +84,7 @@ class KMC:
         # build base BEP contribution to E_a, will be updated each step
         sys.E_BEP = np.empty((len(sys.lat[:,0]),non_diff_rxn+len(sys.neighbour_key[0])),dtype=float)
         for site in range(len(sys.lat[:,0])):
-            sys._lateral_interactions_update(sys.lat,site,site)
+            sys.E_BEP = sys._lateral_interactions_update(sys.E_BEP,sys.lat,site,site)
 
     ################################
     ##  System specific functions ##
@@ -135,9 +135,6 @@ class KMC:
         lattice[site,1] = species
         if new_site != site:
             lattice[new_site,1] = new_species
-        ##
-        ## Will need counter update
-        ##
         if type(counts) == np.ndarray:
             if rxn_ind == 0: counts[0] += 1
             elif rxn_ind == 1: counts[0] -= 1 ; counts[1] += 1
@@ -147,17 +144,18 @@ class KMC:
     ## BEP lateral interactions functions ##
     ########################################
 
-    def _lateral_interactions_update(sys,lattice:np.ndarray,site:int,new_site:int):
+    def _lateral_interactions_update(sys,E_BEP:np.ndarray,lattice:np.ndarray,site:int,new_site:int):
         # update sites
         sites_to_update = sys._get_neigh_set(site)
         sites_to_update.add(site)
         if new_site != site: sites_to_update.union(set(sys.neighbour_key[new_site,:]))
         for s in sites_to_update:
-            site_rxns = sys._get_dependency_key(s)
+            site_rxns = sys._get_allowed_rxns(lattice[s,1])
             lat_i = lattice.copy()
             for rxn in site_rxns:
                 lat_f,_,_ = sys._rxn_step(lat_i,s,rxn,None)
-                sys.E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],rxn]*(sys._lateral_int(lat_f,s)-sys._lateral_int(lat_i,s))
+                E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],rxn]*(sys._lateral_int(lat_f,s)-sys._lateral_int(lat_i,s))
+        return E_BEP
 
     def _lateral_int(sys,lattice:np.ndarray,site:int):
         NN = sys._get_neigh_set(site)
@@ -210,15 +208,17 @@ class KMC:
         If newton fails resorts to brentq method \n
         Relative tolerance: 10**-6
         """
+        order_guass = 5 # Default in scipy = 5
+        rel_tol = 10**-6
         try:
             if kwargs['method'] == 'FRM':
                 # Setup improved FRM initial guess
-                rxn,_,site = other_args
-                guess = time+self._FRM_improved_guess(time,random_number,self.E_a[site,rxn],self.A[site,rxn])
+                rxn,_,site,E_BEP = other_args
+                guess = time+self._FRM_improved_guess(time,random_number,(self.E_a[site,rxn]+E_BEP[site,rxn]),self.A[site,rxn])
             elif kwargs['method'] == 'DM':
                 # Setup improved FRM initial guess
-                c, = other_args
-                guess = time+self._DM_improved_guess(time,random_number,c)
+                c,E_BEP = other_args
+                guess = time+self._DM_improved_guess(time,random_number,c,E_BEP)
             elif kwargs['method'] == 'TI':
                 a0_t = prop_func(time,*other_args)
                 if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
@@ -229,7 +229,6 @@ class KMC:
             if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
             guess = time-np.log(random_number)/a0_t
         
-        rel_tol = 10**-6
         max_tau = 10**2 * self.t_max
         if guess > max_tau:
             try:
@@ -238,30 +237,18 @@ class KMC:
                 guess_method = 'TI'
             self.int_log.append(f'1. Guess greater than max time: Method={guess_method}')
             return np.inf # is this needed?
-        # Generate A0(t)
-        t_lim = min(2*guess,self.t_max)
-        sol_prop = solve_ivp(
-            fun=lambda tt, y : np.array([prop_func(tt,*other_args)],dtype=float),
-            t_span=(time,t_lim),
-            y0=[0.0], # int from time -> time+time_step is zero when time_step=0
-            method='Radau',
-            dense_output=True,
-            rtol=rel_tol
-        )
         # Define functions
         def f(new_time:float):
-            return float(sol_prop.sol(new_time)[0] + np.log(random_number))
+            int_sol,_ = fixed_quad(prop_func,time,new_time,args=other_args,n=order_guass) #  <-------------- TRY SOLVING IN LOG SPACE
+            return float(int_sol) + np.log(random_number)
         def fprime(new_time:float):
             return prop_func(new_time,*other_args)
         # Newton method
-        try:
-            x0 = max(guess,10**-12)
-            sol = root_scalar(f,method='newton',x0=x0,fprime=fprime,rtol=rel_tol)
-            if sol.converged:
-                return sol.root
-        except Exception:
-            pass
-        if sol.root > max_tau: return np.inf
+        x0 = max(guess,10**-12)
+        sol = root_scalar(f,method='newton',x0=x0,fprime=fprime,rtol=rel_tol)
+        if sol.converged: return sol.root
+        print('need brentq:\n',sol)
+        if sol.root > max_tau: print('inf step'); return np.inf
         # If Newton method fails use brentq backup
         newt_attempt = sol.root,sol.flag
         tau_lo = 0 if random_number > 0 else -10**-12 
@@ -298,11 +285,18 @@ class KMC:
                 return 0
 
     ## DM funcs ##
-    def _k_array(sys,time):
-        return sys.A*np.exp(-(sys.E_a+sys.E_BEP)/(k_B*sys.T(time)))
+    def _k_array(sys,time,E_BEP:np.ndarray):
+        if np.asarray(time).ndim == 0:
+            return sys.A*np.exp(-(sys.E_a+E_BEP)/(k_B*sys.T(time)))
+        else:
+            return sys.A[None,...]*np.exp(-(sys.E_a[None,...]+E_BEP[None,...])/(k_B*sys.T(time)[:,None,None]))
 
-    def _DM_total_prop(sys,time:float,c_arr:np.ndarray)->float:
-        return np.sum(sys._k_array(time)*c_arr)
+    def _DM_total_prop(sys,time,c_arr:np.ndarray,E_BEP:np.ndarray)->float:
+        if np.asarray(time).ndim == 0:
+            ax=(0,1)
+        else:
+            ax=(1,2)
+        return np.sum(sys._k_array(time,E_BEP)*c_arr,axis=ax)
     
     def _DM_site_c(
             sys,
@@ -337,17 +331,17 @@ class KMC:
             c[site,:] = sys._DM_site_c(lattice,site)
         return c
     
-    def _DM_get_prop_array(sys,c_array,time):
-        return np.cumsum(c_array*sys._k_array(time))
+    def _DM_get_prop_array(sys,c_array,E_BEP,time):
+        return np.cumsum(c_array*sys._k_array(time,E_BEP))
     
-    def _DM_improved_guess(self,time:float,random_number:float,c_arr:np.ndarray):
+    def _DM_improved_guess(self,time:float,random_number:float,c_arr:np.ndarray,E_BEP:np.ndarray):
         """My improved intial guess for Newton root-finding in DM
         only applies to linear temperature ramps and time-independent Pre-exponential factors
         """
         sim_temp = self.T(time)
         beta = self.T(1)-self.T(0)
 
-        all_E_a = (self.E_a + self.E_BEP)
+        all_E_a = (self.E_a + E_BEP)
         nz_rs,nz_cs = np.nonzero(c_arr)
         E_a_arr = np.empty(len(nz_rs))
         Pre_exp_arr = E_a_arr.copy()
@@ -374,15 +368,15 @@ class KMC:
         return ((temp_guess - sim_temp)/(beta)).real
 
     ## FRM funcs ##
-    def _k(sys,site:int,rxn:int,time:float)->np.ndarray:
-        return sys.A[site,rxn]*np.exp(-(sys.E_a[site,rxn]+sys.E_BEP[site,rxn])/(k_B*sys.T(time)))
+    def _k(sys,site:int,rxn:int,time:float,E_BEP:np.ndarray)->np.ndarray:
+        return sys.A[site,rxn]*np.exp(-(sys.E_a[site,rxn]+E_BEP[site,rxn])/(k_B*sys.T(time)))
     
     def _FRM_generate_queue(sys,lattice:np.ndarray,guess_method:str):
         for site in range(len(lattice[:,0])):
             site_rxns = sys._get_allowed_rxns(lattice[site,1])
             for rxn in site_rxns:
                 if bool(sys._check_allowed(site,rxn,lattice)):
-                    sys._FRM_insert(0,(site,rxn),(rxn,lattice,site),guess=guess_method)
+                    sys._FRM_insert(0,(site,rxn),(rxn,lattice,site,sys.E_BEP),guess=guess_method)
 
     def _FRM_site_prop( # adapt for many species
             sys,
@@ -390,14 +384,15 @@ class KMC:
             rxn:int,
             lattice:np.ndarray,
             site:int,
+            E_BEP:np.ndarray
         )->float:
         c = sys._check_allowed(site,rxn,lattice)
-        k = sys._k(site,rxn,time)
+        k = sys._k(site,rxn,time,E_BEP)
         return  k*c
     
-    def _FRM_update(sys,time:float,site:int,new_site:int,lattice:np.ndarray,guess_method:str):
+    def _FRM_update(sys,time:float,site:int,new_site:int,lattice:np.ndarray,E_BEP:np.ndarray,guess_method:str):
         # update lateral interactions
-        sys._lateral_interactions_update(lattice,site,new_site)
+        E_BEP = sys._lateral_interactions_update(E_BEP,lattice,site,new_site)
         # site to update
         to_update = sys._get_neigh_set(site)
         to_update.add(site)
@@ -411,7 +406,8 @@ class KMC:
             site_rxns = sys._get_allowed_rxns(lattice[s,1])
             for rxn in site_rxns:
                 if bool(sys._check_allowed(s,rxn,lattice)):
-                    sys._FRM_insert(time,(s,rxn),(rxn,lattice,s),guess=guess_method)
+                    sys._FRM_insert(time,(s,rxn),(rxn,lattice,s,E_BEP),guess=guess_method)
+        return E_BEP
 
     def _FRM_improved_guess(self,time:float,random_number:float,E_a:float,Pre_exp:float):
         """Michail's improved intial guess for Newton root-finding in FRM
@@ -442,6 +438,7 @@ class KMC:
         for run in range(sys.runs):
             #Initialise
             lat = lat_initial.copy()
+            E_BEP = sys.E_BEP.copy()
             c = sys._DM_gen_c_array(lat)
             t,n,site,new_site,plot_ind=0.0,0,0,0,0
             adatoms = np.sum(lat[:,1])
@@ -450,7 +447,7 @@ class KMC:
             thetas,rates,temps = times.copy(),times.copy(),times.copy()
             while t<sys.t_max and n<sys.n_max:
                 # Generate next time
-                new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,),method=guess)
+                new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_BEP),method=guess)
                 # Save state
                 theta_save = counter[0]/len(lat[:,1])
                 rate_save = (counter[1]-counter[2])/(new_t-t) if (new_t-t) != 0 else 0
@@ -468,7 +465,7 @@ class KMC:
                 # Advance system time
                 t = new_t
                 # Global prop gen
-                a_acc = sys._DM_get_prop_array(c,t)
+                a_acc = sys._DM_get_prop_array(c,E_BEP,t)
                 if a_acc[-1] == 0: print('Reactions complete (total_propensity = 0)'); break
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
@@ -478,7 +475,7 @@ class KMC:
                 lat,new_site,counter = sys._rxn_step(lat,site,rxn_index,counter)
                 # Local occ and lateral interactions change
                 c = sys._DM_c_change(lat,c,site,new_site)
-                sys._lateral_interactions_update(lat,site,new_site)
+                E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
                 n += 1
             if report: print(f'run{run}: n={n}, t={t}')
             # save run data
@@ -503,6 +500,7 @@ class KMC:
         lat_initial = sys.lat.copy()
         for run in range(sys.runs):
             lat = lat_initial.copy()
+            E_BEP = sys.E_BEP.copy()
             t,n,plot_ind=0.0,0,0
             adatoms = np.sum(lat[:,1])
             counter = np.array([adatoms,0,0]) # [adatoms,total_desoprtions,last_save_desorptions]
@@ -532,7 +530,7 @@ class KMC:
                 t = new_t
                 # Advance state and update queue + lateral interactions
                 lat,new_site,counter = sys._rxn_step(lat,site,rxn,counter)
-                sys._FRM_update(t,site,new_site,lat,guess)
+                E_BEP = sys._FRM_update(t,site,new_site,lat,E_BEP,guess)
                 n += 1
             if report: print(f'run{run}: n={n}, t={t}')
             # save run data
@@ -561,17 +559,18 @@ class KMC:
         for run in range(sys.runs):
             #Initialise
             lat = lat_initial.copy()
+            E_BEP = sys.E_BEP.copy()
             c = sys._DM_gen_c_array(lat)
             t,n=0.0,0
             adatoms = np.sum(lat[:,1])
             counts=np.array([adatoms,0,0])
             while t<sys.t_max and n<sys.n_max:
                 # Generate next time
-                new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,),method=guess)
+                new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_BEP),method=guess)
                 # Advance system time
                 t = new_t
                 # Global prop gen
-                a_acc = sys._DM_get_prop_array(c,t)
+                a_acc = sys._DM_get_prop_array(c,E_BEP,t)
                 if a_acc[-1] == 0: print('Reactions complete (total_propensity = 0)'); break
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
@@ -581,7 +580,7 @@ class KMC:
                 lat,new_site,counts = sys._rxn_step(lat,site,rxn_index,counts)
                 # Local occ and lateral interactions change
                 c = sys._DM_c_change(lat,c,site,new_site)
-                sys._lateral_interactions_update(lat,site,new_site)
+                E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
                 n += 1
         return
     
@@ -595,6 +594,7 @@ class KMC:
         lat_initial = sys.lat.copy()
         for run in range(sys.runs):
             lat = lat_initial.copy()
+            E_BEP = sys.E_BEP.copy()
             t,n=0.0,0
             adatoms = np.sum(lat)
             counts=np.array([adatoms,0,0])
@@ -608,7 +608,7 @@ class KMC:
                 t = new_t
                 # Advance state and update queue + lateral interactions
                 lat,new_site,counts = sys._rxn_step(lat,site,rxn,counts)
-                sys._FRM_update(t,site,new_site,lat,guess)
+                E_BEP = sys._FRM_update(t,site,new_site,lat,E_BEP,guess)
                 n += 1
         return
 
