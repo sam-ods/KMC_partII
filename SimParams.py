@@ -128,7 +128,7 @@ class SimParams:
         if method.lower() == 'many species':
             theta_key = dict(kwargs['theta_key'])
             if sum(theta_key.values()) != 1: raise ValueError('Total fractional coverage must be 1, note the empty site coverage is also required')
-            species_dist = np.empty((max(theta_key.keys())+1))
+            species_dist = np.zeros(10)
             for species in theta_key.keys():
                 species_dist[species] = theta_key[species]
             species_dist = np.cumsum(species_dist)
@@ -169,4 +169,5 @@ class SimParams:
             'generator':self.rng_seed
         }
         return param_dict
+
 
