@@ -133,7 +133,7 @@ class SimParams:
                 species_dist[species] = theta_key[species]
             species_dist = np.cumsum(species_dist)
             for site in range(math.prod(self.lat_dimensions)):
-                adatom = np.searchsorted(species_dist,self.rng.uniform())
+                adatom = np.searchsorted(species_dist,self.rng.uniform(),side='right')
                 self.lat[site,1] = adatom
         
         self.lat_occ = method
@@ -169,3 +169,4 @@ class SimParams:
             'generator':self.rng_seed
         }
         return param_dict
+
