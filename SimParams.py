@@ -30,29 +30,7 @@ class SimParams:
         2. Triangular (111) -> 6 nearest neighbours \n
         Imposes helical boundary conditions - see Newman, Barkema (1999)
         """
-        if system_type.upper() == 'SAA':
-            system_type = system_type.upper()
-            density = sys_attr.get('density')
-            if density == None:
-                density = 1/len(sys.lat[:,0])
-            sites = int(sys.lat[:,0].size)
-            dopants = math.floor(sites*density)
-            if dopants < 1: raise ValueError('dopant too dilute for supercell, try including more sites')
-            dope_sites = sys.rng.choice(range(sites),size=dopants,replace=False)
-            for site in dope_sites: sys.lat[site,0] = 1 # 1 represents dopant and 0 represents host
-        elif system_type.lower() == 'stepped':
-            system_type = system_type.lower()
-            rows,cols = sys.lat_dimensions
-            step_site = math.floor(cols/2)-1 # indexing starts at zero
-            for row in range(rows):
-                sys.lat[step_site,0] = 1
-                sys.lat[step_site+1,0] = 2
-                step_site += cols
-        elif system_type.lower() == 'ideal':
-            system_type = system_type.lower()
-            sys.lat = np.zeros((sys.lat[:,0].size,2),dtype=int)
-        else: raise ValueError('unrecognised system type, check spelling')
-        sys.sys_type = system_type
+        
         # Neighbour key
         sites = sys.lat[:,0].size
         if lattice_type.lower() == 'square':
@@ -95,8 +73,43 @@ class SimParams:
                 ]
         else: raise ValueError('unrecognised lattice type, check spelling')
         sys.lat_type = lattice_type
-        print(f'Built {sys.lat_type} lattice for {sys.sys_type} system')
+        # Site types
         sys._bool_build = True
+        if system_type.upper() == 'SAA':
+            system_type = system_type.upper()
+            density = sys_attr.get('density')
+            if density == None:
+                density = 1/len(sys.lat[:,0])
+            sites = int(sys.lat[:,0].size)
+            dopants = math.floor(sites*density)
+            if dopants < 1: raise ValueError('dopant too dilute for supercell, try including more sites')
+            if density > 1/7: raise ValueError('dopant concentration too high, some will be neighbours')
+            dope_sites = []
+            sites_to_choose = list(range(sites))
+            for i in range(dopants):
+                choice = sys.rng.choice(sites_to_choose)
+                dope_sites.append(choice)
+                sites_to_choose.remove(choice)
+                for choice_n in sys.neigh_key[choice,:]:
+                    try:
+                        sites_to_choose.remove(choice_n)
+                    except ValueError:
+                        pass
+            for site in dope_sites: sys.lat[site,0] = 1 # 1 represents dopant and 0 represents host
+        elif system_type.lower() == 'stepped':
+            system_type = system_type.lower()
+            rows,cols = sys.lat_dimensions
+            step_site = math.floor(cols/2)-1 # indexing starts at zero
+            for row in range(rows):
+                sys.lat[step_site,0] = 1
+                sys.lat[step_site+1,0] = 2
+                step_site += cols
+        elif system_type.lower() == 'ideal':
+            system_type = system_type.lower()
+            sys.lat = np.zeros((sys.lat[:,0].size,2),dtype=int)
+        else: raise ValueError('unrecognised system type, check spelling')
+        sys.sys_type = system_type
+        print(f'Built {sys.lat_type} lattice for {sys.sys_type} system')
         return
 
     def set_lat_occ(self,method:str,lat_template=np.empty((1,1)),**kwargs):
