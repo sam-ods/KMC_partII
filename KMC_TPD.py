@@ -39,18 +39,32 @@ class KMC:
         [...] \n 
         w should be a (n_site_types,n_rxns) array like E_a \n
         """
+        out1 = 'Time-dependent Kinetic Monte Carlo for surface catalysis'
+        out2 = 'Script written by Sam Oades for MChem part II project'
+        # Simulation parameters
         sys.rng = np.random.default_rng(sim_param['generator'])
         sys.t_max,sys.n_max,sys.t_step,sys.t_points = sim_param['t_max'],sim_param['n_max'],sim_param['t_step'],sim_param['t_points']
         sys.runs = sim_param['runs']
         sys.lat = sim_param['lattice']
+        # Get lattice info
         sys.lat_type,sys.sys_type,sys.lat_dimensions = sim_param['lattice_info']
         sys.neighbour_key = sim_param['neighbours']
+        # Initialise FRM queue objects
         sys.FRM_sortlist = SortedList(key=lambda tup:tup[0]) # sort list based on first tuple entry (time)
-        sys.FRM_id_key = {} # ID -> time
         sys.FRM_site_keys = {site:[] for site in range(len(sys.lat[:,0]))} # site -> IDs
+        # Error Logging
         sys.rxn_log,sys.int_log = [],[]
+        # Check correct lattice passed
         if not (sys.lat_type.lower() == 'triangular' and sys.sys_type.upper() == 'SAA'): raise AttributeError('This module is built for C-H activation with surface O on a PtCu (111) SAA. Make sure the correct lattice setup supplied')
-        print(f'Intialising {sys.lat_type} lattice system on a {sys.lat_dimensions} supercell')
+        out3 = f'Intialising {sys.lat_type} lattice system on a {sys.lat_dimensions[0]}x{sys.lat_dimensions[1]} supercell'
+        # Numerical method parameters
+        sys.order_guass = 5 # Default in scipy = 5
+        sys.rel_tol = 10**-6
+        sys.brentq_bracket_max = 60
+
+        ##
+        ## Kinetic parameters
+        ##
         sys.T = Temp_function
         
         # Careful with this when it comes to binary search of prop array
@@ -85,6 +99,16 @@ class KMC:
         sys.E_BEP = np.empty((len(sys.lat[:,0]),non_diff_rxn+len(sys.neighbour_key[0])),dtype=float)
         for site in range(len(sys.lat[:,0])):
             sys.E_BEP = sys._lateral_interactions_update(sys.E_BEP,sys.lat,site,site)
+        out4 = f'Kinetic parameters saved in {np.shape(sys.E_a)[0]}x{np.shape(sys.E_a)[1]} array'
+
+        # fancy message
+        length = max([len(out1)+4,len(out2)+4,len(out3)+4,len(out4)+4])
+        space1,remain1,space2,remain2 = (length - len(out1)+4)//2, (length - len(out1)+4)%2, (length - len(out2)+4)//2, (length - len(out2)+4)%2
+        space3,remain3,space4,remain4 = (length - len(out3)+4)//2, (length - len(out3)+4)%2, (length - len(out4)+4)//2, (length - len(out4)+4)%2
+        breaks = max([len(out1)+4+2*space1+remain1,len(out2)+4+2*space2+remain2,len(out3)+4+2*space3+remain3,len(out4)+4+2*space4+remain4])
+        print('-'*breaks+'\n| '+space1*' '+out1+space1*' '+remain1*' '+' |\n| '+space2*' '+out2+space2*' '+remain2*' '+' |')
+        print('-'*breaks+'\n| '+space3*' '+out3+space3*' '+remain3*' '+' |\n| '+space4*' '+out4+space4*' '+remain4*' '+' |')
+        print('-'*breaks)
 
     ################################
     ##  System specific functions ##
@@ -168,32 +192,20 @@ class KMC:
     ### FRM data structure definition ###
     #####################################
 
-    def _FRM_insert(tree,time:float,ID:tuple,prop_func_args:tuple,guess:str):
-        rxn_time = tree._t_gen(tree._FRM_site_prop,time,tree.rng.random(),prop_func_args,method=guess)
-        if not np.isfinite(rxn_time):
-            tree.rxn_log.append(f'1. Null rxn: t={rxn_time} ID={ID}')
+    def _FRM_insert(tree,ID:tuple):
+        if not np.isfinite(ID[0]):
+            tree.rxn_log.append(f'1. Null rxn: ID={ID}')
             return
-        if ID in tree.FRM_id_key:
-            old_time = tree.FRM_id_key[ID]
-            try:
-                tree.FRM_sortlist.remove((old_time,ID))
-            except Exception:
-                pass
-            tree.FRM_id_key.pop(ID)
-            tree.FRM_site_keys[ID[0]].remove(ID)
-        data = (rxn_time,ID)
-        tree.FRM_sortlist.add(data)
-        tree.FRM_id_key[ID] = rxn_time
-        tree.FRM_site_keys[ID[0]].append(ID)
+        else:
+            tree.FRM_sortlist.add(ID)
+            tree.FRM_site_keys[ID[1]].append(ID)
     
     def _FRM_remove(tree,ID:tuple):
-        if ID in tree.FRM_id_key:
-            old_time = tree.FRM_id_key.pop(ID)
-            try:
-                tree.FRM_sortlist.remove((old_time,ID))
-                tree.FRM_site_keys[ID[0]].remove(ID)
-            except ValueError:
-                pass
+        try:
+            tree.FRM_sortlist.remove(ID)
+            tree.FRM_site_keys[ID[1]].remove(ID)
+        except ValueError:
+            pass
 
     #####################
     ### KMC functions ###
@@ -208,8 +220,8 @@ class KMC:
         If newton fails resorts to brentq method \n
         Relative tolerance: 10**-6
         """
-        order_guass = 5 # Default in scipy = 5
-        rel_tol = 10**-6
+        order_guass = int(self.order_guass)
+        rel_tol = self.rel_tol
         try:
             if kwargs['method'] == 'FRM':
                 # Setup improved FRM initial guess
@@ -239,14 +251,17 @@ class KMC:
             return np.inf # is this needed?
         # Define functions
         def f(new_time:float):
-            int_sol,_ = fixed_quad(prop_func,time,new_time,args=other_args,n=order_guass) #  <-------------- TRY SOLVING IN LOG SPACE
-            return float(int_sol) + np.log(random_number)
+            int_sol,_ = fixed_quad(prop_func,time,new_time,args=other_args,n=order_guass)
+            return float(int_sol + np.log(random_number))
         def fprime(new_time:float):
-            return prop_func(new_time,*other_args)
+            return float(prop_func(new_time,*other_args))
         # Newton method
         x0 = max(guess,10**-12)
         sol = root_scalar(f,method='newton',x0=x0,fprime=fprime,rtol=rel_tol)
         if sol.converged: return sol.root
+        print(f'attempt: a={prop_func(time,*other_args)}\nx0={x0},f={f(x0)},f\'={fprime(x0)}')
+        #print('site,rxn =',other_args[2],other_args[0])
+        #print('lat[site,rxn] =',other_args[1][other_args[2]])
         print('need brentq:\n',sol)
         if sol.root > max_tau: print('inf step'); return np.inf
         # If Newton method fails use brentq backup
@@ -258,7 +273,7 @@ class KMC:
             while f(tau_hi)<0:
                 tau_hi*=2
                 loop_count += 1
-                if loop_count>60: self.int_log.append('2. Failed to find appropriate bracket') ; return np.inf
+                if loop_count>self.brentq_bracket_max: self.int_log.append('2. Failed to find appropriate bracket') ; return np.inf
         sol = root_scalar(f,method='brentq',bracket=[tau_lo,tau_hi],rtol=rel_tol)
         if not sol.converged: raise RuntimeError(f'Both root finding methods failed, check prop_func behaviour (t={time})')
         self.int_log.append(f'3. Newton failed: step={newt_attempt[0]}, Brentq converged: step={sol.root}, flag: {newt_attempt[1]}')
@@ -375,8 +390,9 @@ class KMC:
         for site in range(len(lattice[:,0])):
             site_rxns = sys._get_allowed_rxns(lattice[site,1])
             for rxn in site_rxns:
-                if bool(sys._check_allowed(site,rxn,lattice)):
-                    sys._FRM_insert(0,(site,rxn),(rxn,lattice,site,sys.E_BEP),guess=guess_method)
+                if bool(sys._check_allowed(site,rxn,lattice)): # and (sys._FRM_site_prop(0,rxn,lattice,site,sys.E_BEP) != 0.0)
+                    rxn_time = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(rxn,lattice,site,sys.E_BEP),method=guess_method)
+                    sys._FRM_insert((rxn_time,site,rxn))
 
     def _FRM_site_prop( # adapt for many species
             sys,
@@ -388,7 +404,7 @@ class KMC:
         )->float:
         c = sys._check_allowed(site,rxn,lattice)
         k = sys._k(site,rxn,time,E_BEP)
-        return  k*c
+        return k*c
     
     def _FRM_update(sys,time:float,site:int,new_site:int,lattice:np.ndarray,E_BEP:np.ndarray,guess_method:str):
         # update lateral interactions
@@ -396,7 +412,7 @@ class KMC:
         # site to update
         to_update = sys._get_neigh_set(site)
         to_update.add(site)
-        if new_site != site: to_update = to_update.union(sys._get_neigh_set(new_site))
+        if new_site != site: to_update.update(sys._get_neigh_set(new_site))
         for s in to_update:
             # remove old reactions
             to_remove = sys.FRM_site_keys[s].copy()
@@ -405,8 +421,9 @@ class KMC:
             # add new reactions
             site_rxns = sys._get_allowed_rxns(lattice[s,1])
             for rxn in site_rxns:
-                if bool(sys._check_allowed(s,rxn,lattice)):
-                    sys._FRM_insert(time,(s,rxn),(rxn,lattice,s,E_BEP),guess=guess_method)
+                if bool(sys._check_allowed(s,rxn,lattice)): # and (sys._FRM_site_prop(time,rxn,lattice,site,E_BEP) != 0.0)
+                    rxn_time = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(rxn,lattice,s,E_BEP),method=guess_method)
+                    sys._FRM_insert((rxn_time,s,rxn))
         return E_BEP
 
     def _FRM_improved_guess(self,time:float,random_number:float,E_a:float,Pre_exp:float):
@@ -433,6 +450,7 @@ class KMC:
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
+        print(f'Starting DM for {sys.runs} runs ...')
         data = {}
         lat_initial = sys.lat.copy()
         for run in range(sys.runs):
@@ -486,7 +504,8 @@ class KMC:
                 run_label[2]:thetas,
                 run_label[3]:rates
             }
-            data = data | run_data
+            data.update(run_data)
+        print('DM runs complete')
         return data
     
     def run_FRM(sys,guess='FRM',report=False):
@@ -496,6 +515,7 @@ class KMC:
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
+        print(f'Starting FRM for {sys.runs} runs ...')
         data = {}
         lat_initial = sys.lat.copy()
         for run in range(sys.runs):
@@ -511,7 +531,7 @@ class KMC:
             while t<sys.t_max and n<sys.n_max:
                 # Choose reaction and time
                 if len(sys.FRM_sortlist)==0:print('Reactions complete (reaction queue empty)'); break
-                new_t,index_tup = sys.FRM_sortlist[0]
+                new_t,site,rxn = sys.FRM_sortlist[0]
                 # Save state
                 theta_save = counter[0]/len(lat[:,1])
                 rate_save = (counter[1]-counter[2])/(new_t-t) if (new_t-t) != 0 else 0
@@ -526,7 +546,6 @@ class KMC:
                     next_save += sys.t_step # next time to save
                     plot_ind += 1 # next grid point
                 if save_state: counter[2] = counter[1]; save_state=False # reset counts
-                site,rxn = index_tup
                 t = new_t
                 # Advance state and update queue + lateral interactions
                 lat,new_site,counter = sys._rxn_step(lat,site,rxn,counter)
@@ -541,7 +560,8 @@ class KMC:
                 run_label[2]:thetas,
                 run_label[3]:rates
             }
-            data = data | run_data
+            data.update(run_data)
+        print('FRM runs complete')
         return data
     
     ##########################
@@ -555,6 +575,8 @@ class KMC:
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
+        print(f'Starting DM for {sys.runs} runs ...')
+        print('Note: this is for benchmarking - I\'m not saving any data!')
         lat_initial = sys.lat.copy()
         for run in range(sys.runs):
             #Initialise
@@ -582,6 +604,7 @@ class KMC:
                 c = sys._DM_c_change(lat,c,site,new_site)
                 E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
                 n += 1
+        print('DM runs complete')
         return
     
     def run_FRM_no_data(sys,guess='FRM'):
@@ -591,6 +614,8 @@ class KMC:
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
+        print(f'Starting FRM for {sys.runs} runs ...')
+        print('Note: this is for benchmarking - I\'m not saving any data!')
         lat_initial = sys.lat.copy()
         for run in range(sys.runs):
             lat = lat_initial.copy()
@@ -603,13 +628,13 @@ class KMC:
             while t<sys.t_max and n<sys.n_max:
                 # Choose reaction and time
                 if len(sys.FRM_sortlist)==0:print('Reactions complete (reaction queue empty)'); break
-                new_t,index_tup = sys.FRM_sortlist[0]
-                site,rxn = index_tup
+                new_t,site,rxn = sys.FRM_sortlist[0]
                 t = new_t
                 # Advance state and update queue + lateral interactions
                 lat,new_site,counts = sys._rxn_step(lat,site,rxn,counts)
                 E_BEP = sys._FRM_update(t,site,new_site,lat,E_BEP,guess)
                 n += 1
+        print('FRM runs complete')
         return
 
     ##################
