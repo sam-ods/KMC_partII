@@ -39,13 +39,13 @@ class KMC:
         w should be a (n_site_types,n_rxns) array like E_a \n
         """
         out_i = r"""
-            _________        _________
-            \   ___  \       \   _____\
-             \  \__\  \   __  \  \     __    __
-              \   _____\__\  \_\  \    \  \  \  \
-               \  \     \__   __\  \    \  \  \  \
-                \  \       \  \__\  \____\  \__\  \
-                 \__\       \ ____\_______\________\ """
+_________        _________
+\   ___  \       \   _____\
+ \  \__\  \   __  \  \     __    __
+  \   _____\__\  \_\  \    \  \  \  \
+   \  \     \__   __\  \    \  \  \  \
+    \  \       \  \__\  \____\  \__\  \
+     \__\       \ ____\_______\________\ """
         print(out_i)
         out1 = 'Time-dependent Kinetic Monte Carlo for surface catalysis'
         out2 = 'Script written by Sam Oades for MChem part II project'
