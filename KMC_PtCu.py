@@ -39,13 +39,13 @@ class KMC:
         w should be a (n_site_types,n_rxns) array like E_a \n
         """
         out_i = r"""
-_________        _________
-\   ___  \       \   _____\
- \  \__\  \   __  \  \     __    __
-  \   _____\__\  \_\  \    \  \  \  \
-   \  \     \__   __\  \    \  \  \  \
-    \  \       \  \__\  \____\  \__\  \
-     \__\       \ ____\_______\________\ """
+            _________        _________
+            \   ___  \       \   _____\
+             \  \__\  \   __  \  \     __    __
+              \   _____\__\  \_\  \    \  \  \  \
+               \  \     \__   __\  \    \  \  \  \
+                \  \       \  \__\  \____\  \__\  \
+                 \__\       \ ____\_______\________\ """
         print(out_i)
         out1 = 'Time-dependent Kinetic Monte Carlo for surface catalysis'
         out2 = 'Script written by Sam Oades for MChem part II project'
@@ -633,7 +633,13 @@ _________        _________
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
+        print(f'Starting DM with {guess} guess scheme for {sys.runs} runs ...')
         data = {}
+        # Guess switching
+        switch = False
+        if guess == 'switch':
+            print('Guess swicth-scheme ON')
+            guess,switch,switch_limit = 'DM',True,5
         for run in range(sys.runs):
             #Initialise
             lat = sys.lat.copy()
@@ -646,6 +652,7 @@ _________        _________
             pop_dict = {}
             for i in range(14): pop_dict[(0,i)] = times.copy(); pop_dict[(1,i)] = times.copy()
             while t<sys.t_max and n<sys.n_max:
+                if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_a,A,E_BEP),method=guess)
                 # Save state
@@ -676,6 +683,7 @@ _________        _________
                 E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
                 n += 1
             if report: print(f'run{run}: n={n}, t={t}')
+            if switch: guess = 'DM' # swicth back to improved guess for next run
             # save run data
             run_label = [f'time{run}',f'temp{run}',f'pops{run}']
             run_data = {
@@ -684,6 +692,7 @@ _________        _________
                 run_label[2]:pop_dict
             }
             data.update(run_data)
+        print('DM runs complete')
         return data
     
     def run_FRM(sys,guess='FRM',report=False):
@@ -693,6 +702,7 @@ _________        _________
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
+        print(f'Starting FRM with {guess} guess scheme for {sys.runs} runs ...')
         data = {}
         for run in range(sys.runs):
             lat = sys.lat.copy()
@@ -735,6 +745,7 @@ _________        _________
                 run_label[2]:pop_dict
             }
             data.update(run_data)
+        print(f'FRM runs complete')
         return data
     
     ##########################
@@ -748,6 +759,13 @@ _________        _________
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
+        print(f'Starting DM with {guess} guess scheme for {sys.runs} runs ...')
+        print('Note: this is for benchmarking - I\'m not saving any data!')
+        # Guess switching
+        switch = False
+        if guess == 'switch':
+            print('Guess swicth-scheme ON')
+            guess,switch,switch_limit = 'DM',True,5
         for run in range(sys.runs):
             #Initialise
             lat = sys.lat.copy()
@@ -755,6 +773,7 @@ _________        _________
             c = sys._DM_gen_c_array(lat)
             t,n=0.0,0
             while t<sys.t_max and n<sys.n_max:
+                if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_a,A,E_BEP),method=guess)
                 # Advance system time
@@ -773,6 +792,8 @@ _________        _________
                 E_a,A = sys._kinetic_param_update(lat,E_a,A,site,new_site)
                 E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
                 n += 1
+            if switch: guess = 'DM' # swicth back to improved guess for next run
+        print('DM runs complete')
         return
     
     def run_FRM_no_data(sys,guess='FRM'):
@@ -782,6 +803,8 @@ _________        _________
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
+        print(f'Starting FRM with {guess} guess scheme for {sys.runs} runs ...')
+        print('Note: this is for benchmarking - I\'m not saving any data!')
         for run in range(sys.runs):
             lat = sys.lat.copy()
             E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),sys.E_BEP.copy()
@@ -798,6 +821,7 @@ _________        _________
                 E_a,A = sys._kinetic_param_update(lat,E_a,A,site,new_site)
                 E_BEP = sys._FRM_update(t,site,new_site,E_a,A,E_BEP,lat,guess)
                 n += 1
+        print('FRM runs complete')
         return
 
     ##################
