@@ -355,7 +355,7 @@ class KMC:
         for s in sites_to_update:
             E_BEP[s,:] = 0.0
             for rxn in sys.species_rxns[lattice[s,1]]:
-                if bool(sys._check_allowed(s,rxn,lattice)): # only updated allowed reactions?
+                if sys._check_allowed(s,rxn,lattice): # only updated allowed reactions?
                     lat_i = lattice.copy()
                     lat_f,_,_ = sys._rxn_step(lat_i.copy(),s,rxn,None)
                     E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],lattice[s,1],rxn]*(sys._lateral_int(lat_f,s)-sys._lateral_int(lat_i,s))
@@ -413,7 +413,7 @@ class KMC:
                 guess = time+self._DM_improved_guess(time,random_number,c,E_a,A,E_BEP)
             elif kwargs['method'] == 'TI':
                 a0_t = prop_func(time,*other_args)
-                if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
+                if a0_t<=0:raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
                 guess = time-np.log(random_number)/a0_t
         except KeyError:
             # Setup intial guess (naive)
@@ -461,18 +461,18 @@ class KMC:
         # rxn -> tuple( new_site , set(required neighbours) )
         neigh_species = set()
         new_site,req_neighs = sys._get_dependency_key(site,lattice[site,1])[rxn]
-        if site == new_site: # checks all neighbours
-            for s_n in sys.neighbour_key[site,:]: neigh_species.add(lattice[s_n,1])
-            if req_neighs.issubset(neigh_species):
-                return 1
-            else:
-                return 0
-        else: # checks a specific direction
+        if new_site != site: # checks a specific direction
             neigh_species.add(lattice[new_site,1])
             if req_neighs.issubset(neigh_species):
-                return 1
+                return True
             else:
-                return 0
+                return False
+        else: # checks all neighbours
+            for s_n in sys.neighbour_key[site,:]: neigh_species.add(lattice[s_n,1])
+            if req_neighs.issubset(neigh_species):
+                return True
+            else:
+                return False
 
     def _kinetic_param_update(sys,lattice:np.ndarray,E_a:np.ndarray,A:np.ndarray,site:int,new_site:int):
         E_a[site,:] = sys.Ea_ref[lattice[site,0],lattice[site,1]]
@@ -483,18 +483,27 @@ class KMC:
         return E_a,A
 
     ## DM funcs ##
-    def _k_array(sys,time,E_a:np.ndarray,A:np.ndarray,E_BEP:np.ndarray):
-        if np.asarray(time).ndim == 0:
-            return A*np.exp(-(E_a+E_BEP)/(k_B*sys.T(time)))
-        else:
-            return A[None,...]*np.exp(-(E_a[None,...]+E_BEP[None,...])/(k_B*sys.T(time)[:,None,None]))
 
     def _DM_total_prop(sys,time,c_arr:np.ndarray,E_a:np.ndarray,A:np.ndarray,E_BEP:np.ndarray)->float:
+        Am,Eam,Ebm = A[c_arr],E_a[c_arr],E_BEP[c_arr]
+        tmp1 = np.empty(np.shape(Eam),dtype=np.float64)
+        np.add(Eam,Ebm,out=tmp1)
         if np.asarray(time).ndim == 0:
-            ax=(0,1)
+            np.exp((-tmp1/(k_B*sys.T(time))),out=tmp1)
+            np.multiply(Am,tmp1,out=tmp1)
+            return np.sum(tmp1,axis=0)
         else:
-            ax=(1,2)
-        return np.sum(sys._k_array(time,E_a,A,E_BEP)*c_arr,axis=ax)
+            ans = np.empty((len(time),len(Am)),dtype=np.float64)
+            np.exp((-tmp1[None,:]/(k_B*sys.T(time)[:,None])),out=ans)
+            np.multiply(Am[None,:],ans,out=ans)
+            return  np.sum(ans,axis=1)
+        
+    def _DM_get_prop_array(sys,c_array:np.ndarray,E_a:np.ndarray,A:np.ndarray,E_BEP:np.ndarray,time:float):
+        ans = np.zeros(np.shape(E_a),dtype=np.float64)
+        np.add(E_a,E_BEP,out=ans,where=c_array)
+        np.exp((-ans/(k_B*sys.T(time))),out=ans,where=c_array)
+        np.multiply(A,ans,out=ans,where=c_array)
+        return np.cumsum(ans)
     
     def _DM_site_c(
             sys,
@@ -522,13 +531,11 @@ class KMC:
         return c_array
     
     def _DM_gen_c_array(sys,lattice:np.ndarray):
-        c = np.empty((np.shape(sys.E_a)),dtype=int)
+        c = np.empty((np.shape(sys.E_a)),dtype=bool)
         for site in range(len(lattice[:,0])):
             c[site,:] = sys._DM_site_c(lattice,site)
         return c
-    
-    def _DM_get_prop_array(sys,c_array:np.ndarray,E_a:np.ndarray,A:np.ndarray,E_BEP:np.ndarray,time:float):
-        return np.cumsum(c_array*sys._k_array(time,E_a,A,E_BEP))
+
     
     def _DM_improved_guess(self,time:float,random_number:float,c_arr:np.ndarray,E_a:np.ndarray,A:np.ndarray,E_BEP:np.ndarray):
         """My improved intial guess for Newton root-finding in DM
@@ -571,7 +578,7 @@ class KMC:
         for site in range(len(lattice[:,0])):
             site_rxns = sys.species_rxns[lattice[site,1]]
             for rxn in site_rxns:
-                if bool(sys._check_allowed(site,rxn,lattice)):
+                if sys._check_allowed(site,rxn,lattice):
                     rxn_time = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(rxn,lattice,site,E_a,A,E_BEP),method=guess_method)
                     sys._FRM_insert((rxn_time,site,rxn))
 
@@ -604,7 +611,7 @@ class KMC:
             # add new reactions
             site_rxns = sys.species_rxns[lattice[s,1]]
             for rxn in site_rxns:
-                if bool(sys._check_allowed(s,rxn,lattice)):
+                if sys._check_allowed(s,rxn,lattice):
                     rxn_time = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(rxn,lattice,s,E_a,A,E_BEP),method=guess_method)
                     sys._FRM_insert((rxn_time,s,rxn))
         return E_BEP
@@ -633,13 +640,7 @@ class KMC:
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
-        print(f'Starting DM with {guess} guess scheme for {sys.runs} runs ...')
         data = {}
-        # Guess switching
-        switch = False
-        if guess == 'switch':
-            print('Guess swicth-scheme ON')
-            guess,switch,switch_limit = 'DM',True,5
         for run in range(sys.runs):
             #Initialise
             lat = sys.lat.copy()
@@ -652,7 +653,7 @@ class KMC:
             pop_dict = {}
             for i in range(14): pop_dict[(0,i)] = times.copy(); pop_dict[(1,i)] = times.copy()
             while t<sys.t_max and n<sys.n_max:
-                if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
+                if np.sum(c) == 0: print('Reactions complete (no allowed reactions)'); break
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_a,A,E_BEP),method=guess)
                 # Save state
@@ -670,7 +671,6 @@ class KMC:
                 t = new_t
                 # Global prop gen
                 a_acc = sys._DM_get_prop_array(c,E_a,A,E_BEP,t)
-                if a_acc[-1] == 0: print('Reactions complete (total_propensity = 0)'); break
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
                 rxn_index = mu_index % len(sys.E_a[0,:])
@@ -683,7 +683,6 @@ class KMC:
                 E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
                 n += 1
             if report: print(f'run{run}: n={n}, t={t}')
-            if switch: guess = 'DM' # swicth back to improved guess for next run
             # save run data
             run_label = [f'time{run}',f'temp{run}',f'pops{run}']
             run_data = {
@@ -692,7 +691,6 @@ class KMC:
                 run_label[2]:pop_dict
             }
             data.update(run_data)
-        print('DM runs complete')
         return data
     
     def run_FRM(sys,guess='FRM',report=False):
@@ -702,7 +700,6 @@ class KMC:
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
-        print(f'Starting FRM with {guess} guess scheme for {sys.runs} runs ...')
         data = {}
         for run in range(sys.runs):
             lat = sys.lat.copy()
@@ -717,7 +714,7 @@ class KMC:
             sys._FRM_generate_queue(lat,E_a,A,E_BEP,guess)
             while t<sys.t_max and n<sys.n_max:
                 # Choose reaction and time
-                if len(sys.FRM_sortlist)==0:print('Reactions complete (reaction queue empty)'); break
+                if len(sys.FRM_sortlist)==0: print('Reactions complete (reaction queue empty)'); break
                 new_t,site,rxn = sys.FRM_sortlist[0]
                 # Save state
                 next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
@@ -745,7 +742,6 @@ class KMC:
                 run_label[2]:pop_dict
             }
             data.update(run_data)
-        print(f'FRM runs complete')
         return data
     
     ##########################
@@ -759,13 +755,6 @@ class KMC:
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
-        print(f'Starting DM with {guess} guess scheme for {sys.runs} runs ...')
-        print('Note: this is for benchmarking - I\'m not saving any data!')
-        # Guess switching
-        switch = False
-        if guess == 'switch':
-            print('Guess swicth-scheme ON')
-            guess,switch,switch_limit = 'DM',True,5
         for run in range(sys.runs):
             #Initialise
             lat = sys.lat.copy()
@@ -773,14 +762,13 @@ class KMC:
             c = sys._DM_gen_c_array(lat)
             t,n=0.0,0
             while t<sys.t_max and n<sys.n_max:
-                if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
+                if np.sum(c)==0: print('Reactions complete (no allowed reactions)'); break
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_a,A,E_BEP),method=guess)
                 # Advance system time
                 t = new_t
                 # Global prop gen
                 a_acc = sys._DM_get_prop_array(c,E_a,A,E_BEP,t)
-                if a_acc[-1] == 0: print('Reactions complete (total_propensity = 0)'); break
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
                 rxn_index = mu_index % len(sys.E_a[0,:])
@@ -792,8 +780,6 @@ class KMC:
                 E_a,A = sys._kinetic_param_update(lat,E_a,A,site,new_site)
                 E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
                 n += 1
-            if switch: guess = 'DM' # swicth back to improved guess for next run
-        print('DM runs complete')
         return
     
     def run_FRM_no_data(sys,guess='FRM'):
@@ -803,8 +789,6 @@ class KMC:
         dataframe labels of the form (e.g. run X): \n
         'timeX','tempX','thetaX','rateX'
         """
-        print(f'Starting FRM with {guess} guess scheme for {sys.runs} runs ...')
-        print('Note: this is for benchmarking - I\'m not saving any data!')
         for run in range(sys.runs):
             lat = sys.lat.copy()
             E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),sys.E_BEP.copy()
@@ -813,7 +797,7 @@ class KMC:
             sys._FRM_generate_queue(lat,E_a,A,E_BEP,guess)
             while t<sys.t_max and n<sys.n_max:
                 # Choose reaction and time
-                if len(sys.FRM_sortlist)==0:print('Reactions complete (reaction queue empty)'); break
+                if len(sys.FRM_sortlist)==0: print('Reactions complete (reaction queue empty)'); break
                 new_t,site,rxn = sys.FRM_sortlist[0]
                 t = new_t
                 # Advance state and update queue + lateral interactions
@@ -821,7 +805,6 @@ class KMC:
                 E_a,A = sys._kinetic_param_update(lat,E_a,A,site,new_site)
                 E_BEP = sys._FRM_update(t,site,new_site,E_a,A,E_BEP,lat,guess)
                 n += 1
-        print('FRM runs complete')
         return
 
     ##################
