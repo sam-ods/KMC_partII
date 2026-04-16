@@ -89,7 +89,7 @@ ______________ ___________ ___________
         E_a = np.atleast_2d(E_a)
         Pre_exp = np.atleast_2d(Pre_exp)
         w_arr = np.atleast_2d(w_arr)
-        J_arr = np.atleast_2d(J_arr)
+        J_arr = np.atleast_3d(J_arr)
         expect_shape = (2,2+2)
         if np.shape(E_a) != expect_shape:
             raise IndexError(f'Actvation energies input wrong, should be {expect_shape} but E_a input is {np.shape(E_a)}')
@@ -106,8 +106,14 @@ ______________ ___________ ___________
                 sys.A[site,2+neigh_ind] = Pre_exp[site_type,2+sys.lat[neigh,0]]
         sys.n_proc = len(sys.E_a[0,:])
         # NN coupling matrix and TS factor
-        sys.J_BEP = J_arr
-        sys.w_BEP = w_arr
+        if np.shape(J_arr) != (2,2,2):
+            raise IndexError('J_arr should be (n_site_types,n_species+1,n_species+1)')
+        else:
+            sys.J_BEP = J_arr
+        if np.shape(w_arr) != (2,8):
+            raise IndexError('w_arr should be (n_site_types,n_processes)')
+        else:
+            sys.w_BEP = w_arr
         # build base BEP contribution to E_a, will be updated each step
         sys.E_BEP = np.empty((sys.n_sites,2+len(sys.neighbour_key[0])),dtype=float)
         for site in range(sys.n_sites):
@@ -186,7 +192,7 @@ ______________ ___________ ___________
         NN = sys._get_neigh_set(site)
         F_NN = 0
         for s in NN:
-            F_NN += 0.5*sys.J_BEP[lattice[site,1],lattice[s,1]] # 0.5 since we are using the 2 body interaction energy
+            F_NN += 0.5*sys.J_BEP[lattice[site,0],lattice[site,1],lattice[s,1]] # 0.5 since we are using the 2 body interaction energy
         return F_NN
 
     #####################################
@@ -698,7 +704,7 @@ ______________ ___________ ___________
                 if sys._check_allowed(s,rxn,lattice): # only updated allowed reactions?
                     lat_i = lattice.copy()
                     lat_f,_,_ = sys._rxn_step(lat_i.copy(),s,rxn,None)
-                    E_BEP[s,rxn] = sys.w_BEP[lattice[s,1],rxn]*(sys._lateral_int_2NNS(lat_f,s)-sys._lateral_int_2NNS(lat_i,s))
+                    E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],rxn]*(sys._lateral_int_2NNS(lat_f,s)-sys._lateral_int_2NNS(lat_i,s))
         return E_BEP
 
     def _lateral_int_2NNS(sys,lattice:np.ndarray,site:int):
@@ -707,9 +713,9 @@ ______________ ___________ ___________
         F_NN = 0
         # 0.5 since we are using the 2 body interaction energy
         for s in NN: # 1st NN interactions
-            F_NN += 0.5*sys.J_BEP[lattice[site,1],lattice[s,1]]
+            F_NN += 0.5*sys.J_BEP[lattice[site,0],lattice[site,1],lattice[s,1]]
         for s in NNs2: # 2nd NN interactions
-            F_NN += 0.5*sys.J_BEP2[lattice[site,1],lattice[s,1]]
+            F_NN += 0.5*sys.J_BEP2[lattice[site,0],lattice[site,1],lattice[s,1]]
         return float(F_NN)
 
     def run_DM_2NNs(sys,J_2NNs:np.ndarray,guess:str='TI',report:bool=False):

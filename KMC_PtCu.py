@@ -98,7 +98,7 @@ _________        _________
             raise IndexError(f'Pre-exp and E_a array dimensions dont match: {np.shape(Pre_exp)} and {np.shape(E_a)}')
         if np.shape(w_arr) != expect_shape: 
             raise IndexError(f'w_arr wrong shape! should be {expect_shape} but is {np.shape(w_arr)}')
-        if np.shape(J_arr) == (num_species,num_species):
+        if np.shape(J_arr) == (2,num_species,num_species):
             sys.J_BEP = J_arr 
         else:
             raise IndexError(f'J_arr wrong shape! should be {(num_species,num_species)} but is {np.shape(J_arr)}')
@@ -368,7 +368,7 @@ _________        _________
         NN = set(sys.neighbour_key[site,:])
         F_NN = 0
         for s in NN:
-            F_NN += 0.5*sys.J_BEP[lattice[site,1],lattice[s,1]] # 0.5 since we are using the 2 body interaction energy
+            F_NN += 0.5*sys.J_BEP[lattice[site,0],lattice[site,1],lattice[s,1]] # 0.5 since we are using the 2 body interaction energy
         return float(F_NN)
 
     #####################################
@@ -898,9 +898,9 @@ _________        _________
         F_NN = 0
         # 0.5 since we are using the 2 body interaction energy
         for s in NN: # 1st NN interactions
-            F_NN += 0.5*sys.J_BEP[lattice[site,1],lattice[s,1]]
+            F_NN += 0.5*sys.J_BEP[lattice[site,0],lattice[site,1],lattice[s,1]]
         for s in NNs2: # 2nd NN interactions
-            F_NN += 0.5*sys.J_BEP2[lattice[site,1],lattice[s,1]]
+            F_NN += 0.5*sys.J_BEP2[lattice[site,0],lattice[site,1],lattice[s,1]]
         return float(F_NN)
     
     def run_DM_2NNs(sys,J_2NNs:np.ndarray,guess:str='TI',report:bool=False):
