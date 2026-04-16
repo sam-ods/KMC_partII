@@ -1,5 +1,6 @@
 import numpy as np
 import math
+import copy
 
 class SimParams:
     def __init__(self,t_max:float,n_max:int,points_to_plot:int,Lattice_dimensions:tuple,runs:int=1,rng_seed=None):
@@ -117,7 +118,7 @@ class SimParams:
         1. random (needs a num_species kwarg)\n
         2. saturated (needs a fill_species kwarg)\n
         3. custom (note need to supply site types as well) \n
-        4. many species (need to supply a {species:coverage} dict as 'theta_key' kwarg)\n
+        4. thetas (need to supply a {species:coverage} dict as 'theta_key' kwarg)\n
         Make sure this key is consistent with the KMC reaction species identities \n
         Many species method populates lattice randomly according to distribution supplied, so will be subject to some variation depending on lattice size
         """
@@ -126,19 +127,19 @@ class SimParams:
             for site in range(math.prod(self.lat_dimensions)):
                 self.lat[site,1] = self.rng.integers(0,num_species,endpoint=True)
 
-        if method.lower() == 'saturated':
+        elif method.lower() == 'saturated':
             fill_species = kwargs['fill_species']
             self.lat[:,1] = np.full((self.lat[:,1].size),fill_value=fill_species,dtype=int)
             method += f'({fill_species})'
 
-        if method.lower() == 'empty':
+        elif method.lower() == 'empty':
             self.lat[:,1] = np.zeros((self.lat[:,1].size),dtype=int)
 
-        if method.lower() == 'custom':
+        elif method.lower() == 'custom':
             if self.lat.shape != lat_template.shape: raise ValueError(f'Lattice supplied is wrong dimensions, should be: {self.lat.shape}')
             self.lat = lat_template
 
-        if method.lower() == 'many species':
+        elif method.lower() == 'thetas':
             theta_key = dict(kwargs['theta_key'])
             if sum(theta_key.values()) != 1: raise ValueError('Total fractional coverage must be 1, note the empty site coverage is also required')
             species_dist = np.zeros(10)
@@ -146,9 +147,11 @@ class SimParams:
                 species_dist[species] = theta_key[species]
             species_dist = np.cumsum(species_dist)
             for site in range(math.prod(self.lat_dimensions)):
-                adatom = np.searchsorted(species_dist,self.rng.uniform(),side='right')
+                adatom = np.searchsorted(species_dist,self.rng.uniform())
                 self.lat[site,1] = adatom
         
+        else: raise KeyError('Please supply a valid occupancy type')
+
         self.lat_occ = method
         print(f'Lattice populated according to {method} occupancy')
         return 
@@ -181,6 +184,6 @@ class SimParams:
             't_points':self.t_points,
             'generator':self.rng_seed
         }
-        return param_dict
+        return copy.deepcopy(param_dict)
 
 
