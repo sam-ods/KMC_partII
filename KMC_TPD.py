@@ -570,8 +570,7 @@ ______________ ___________ ___________
             E_BEP = sys.E_BEP.copy()
             c,c_count = sys._DM_gen_c_array(lat)
             t,n=0.0,0
-            adatoms = np.sum(lat[:,1])
-            counts=np.array([adatoms,0,0])
+            counts = sys.counter.copy()
             s_CPU = time.process_time()
             s_wall = time.time()
             while t<sys.t_max and n<sys.n_max:
@@ -616,8 +615,7 @@ ______________ ___________ ___________
             lat = sys.lat.copy()
             E_BEP = sys.E_BEP.copy()
             t,n=0.0,0
-            adatoms = np.sum(lat)
-            counts=np.array([adatoms,0,0])
+            counts = sys.counter.copy()
             # Initialise data structure
             queue,queue_IDs = sys._FRM_generate_queue(lat,E_BEP,guess)
             s_CPU = time.process_time()
