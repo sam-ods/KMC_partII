@@ -161,9 +161,14 @@ ______________ ___________ ___________
         if new_site != site:
             lattice[new_site,1] = new_species
         if type(counts) == np.ndarray:
-            if rxn_ind == 0: counts[lattice[site,0],0] += 1 # ads
-            elif rxn_ind == 1: counts[lattice[site,0],0] -= 1 ; counts[lattice[site,0],1] += 1 # des
-            else: counts[lattice[site,0],0] -= 1 ; counts[lattice[new_site,0],0] += 1  # diff
+            if rxn_ind == 0: # ads
+                counts[lattice[site,0],0] += 1 
+            elif rxn_ind == 1:# des
+                counts[lattice[site,0],0] -= 1
+                counts[lattice[site,0],1] += 1 
+            else: # diff
+                counts[lattice[site,0],0] -= 1
+                counts[lattice[new_site,0],0] += 1 
         return lattice,new_site,counts
 
     ########################################
@@ -465,7 +470,7 @@ ______________ ___________ ___________
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_BEP),method=guess)
                 # Save state
-                plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
+                count,plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
                 # Advance system time
                 t = new_t
                 # Global prop gen
@@ -519,7 +524,7 @@ ______________ ___________ ___________
                 if len(queue)==0:print('Reactions complete (reaction queue empty)'); break
                 new_t,site,rxn = queue[0]
                 # Save state
-                plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
+                count,plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
                 # Advance state and update queue + lateral interactions
                 t = new_t
                 lat,new_site,count = sys._rxn_step(lat,site,rxn,count)
@@ -765,7 +770,7 @@ ______________ ___________ ___________
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_BEP),method=guess)
                 # Save state
-                plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
+                count,plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
                 # Advance system time
                 t = new_t
                 # Global prop gen
@@ -826,7 +831,7 @@ ______________ ___________ ___________
                 if len(queue)==0:print('Reactions complete (reaction queue empty)'); break
                 new_t,site,rxn = queue[0]
                 # Save state
-                plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
+                count,plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
                 # Advance state and update queue + lateral interactions
                 t = new_t
                 lat,new_site,count = sys._rxn_step(lat,site,rxn,count)
@@ -850,7 +855,8 @@ ______________ ___________ ___________
     ### Data funcs ###
     ##################
     def _save_state(
-            sys,t:float,
+            sys,
+            t:float,
             new_t:float,
             counter:np.ndarray,
             plot_ind:int,
@@ -860,21 +866,24 @@ ______________ ___________ ___________
             thetas:np.ndarray,
             rates:np.ndarray
         ):
-        pops_save = counter[0:3,0]
-        theta_save = pops_save/sys.n_sites_per_type
-        rate_save = (counter[0:3,1]-counter[0:3,2])/(new_t-t) if (new_t-t) != 0 else 0
         next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
-        while next_save<new_t and plot_ind<sys.t_points:
-            # save values of interest
-            pops[0:3,plot_ind] = pops_save[:]
-            thetas[0:3,plot_ind] = theta_save[:]
-            rates[0:3,plot_ind] = rate_save[:]
-            times[plot_ind] = next_save
-            temps[plot_ind] = sys.T(next_save)
-            next_save += sys.t_step # next time to save
-            plot_ind += 1 # next grid point
-        counter[0:3,2] = counter[0:3,1] # reset counts
-        return plot_ind,times,temps,pops,thetas,rates
+        if new_t > next_save:
+            pops_save = counter[0:3,0]
+            theta_save = pops_save/sys.n_sites_per_type
+            if plot_ind != 0: last_save = times[(plot_ind-1)]
+            else: last_save = 0
+            rate_save = (counter[0:3,1]-counter[0:3,2])/(new_t-last_save)
+            while next_save<new_t and plot_ind<sys.t_points:
+                # save values of interest
+                pops[0:3,plot_ind] = pops_save[:]
+                thetas[0:3,plot_ind] = theta_save[:]
+                rates[0:3,plot_ind] = rate_save
+                times[plot_ind] = next_save
+                temps[plot_ind] = sys.T(next_save)
+                next_save += sys.t_step # next time to save
+                plot_ind += 1 # next grid point
+            counter[0:3,2] = counter[0:3,1] # reset counts
+        return counter,plot_ind,times,temps,pops,thetas,rates
         
     def get_avg(sys,data):
         """Calculates the averages of each column in a KMC data output \n

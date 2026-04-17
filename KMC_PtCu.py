@@ -1035,15 +1035,16 @@ _________        _________
     
     def _save_state(sys,t:float,new_t:float,counter:np.ndarray,plot_ind:int,times:np.ndarray,temps:np.ndarray,pop_dict:dict):
         next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
-        while next_save<new_t and plot_ind<sys.t_points:
-            # save values of interest
-            times[plot_ind] = next_save
-            temps[plot_ind] = sys.T(next_save)
-            for i in range(14): # all species + desoprtion counters
-                for s in range(3):
-                    pop_dict[(s,i)][plot_ind] = counter[s,i]
-            next_save += sys.t_step # next time to save
-            plot_ind += 1 # next grid point
+        if new_t > next_save:
+            while next_save<new_t and plot_ind<sys.t_points:
+                # save values of interest
+                times[plot_ind] = next_save
+                temps[plot_ind] = sys.T(next_save)
+                for i in range(14): # all species + desoprtion counters
+                    for s in range(3):
+                        pop_dict[(s,i)][plot_ind] = counter[s,i]
+                next_save += sys.t_step # next time to save
+                plot_ind += 1 # next grid point
         return pop_dict,plot_ind
 
     def get_avg(sys,data):
