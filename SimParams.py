@@ -77,6 +77,7 @@ class SimParams:
         # Site types
         sys._bool_build = True
         if system_type.upper() == 'SAA':
+            # 3 site types: 0 = bulk Cu, 1 = boundary Cu, 2 = Pt
             system_type = system_type.upper()
             density = sys_attr.get('density')
             if density == None:
@@ -96,7 +97,9 @@ class SimParams:
                         sites_to_choose.remove(choice_n)
                     except ValueError:
                         pass
-            for site in dope_sites: sys.lat[site,0] = 1 # 1 represents dopant and 0 represents host
+            for site in dope_sites:
+                sys.lat[site,0] = 2 # Pt atom
+                for s_n in sys.neigh_key[site,:]: sys.lat[s_n,0] = 1 # boundary Cu
         elif system_type.lower() == 'stepped':
             system_type = system_type.lower()
             rows,cols = sys.lat_dimensions

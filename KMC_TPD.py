@@ -19,28 +19,9 @@ class KMC:
             Pre_exp:np.ndarray,
             Temp_function:callable,
             J_arr:np.ndarray,
-            w_arr:np.ndarray,
-            **kwargs
+            w_arr:np.ndarray
             ):
-        """E_a and pre-exponetial required as specific shape (n_site_types,2+n_site_types) \n
-        T-dependent pre-exponentials not supported (yet?) \n
-        [ads0,des0,diff00,diff01,diff02,...] \n
-        [ads1,des1,diff10,diff11,diff12,...] \n
-        [ads2,des2,diff20,diff21,diff22,...] \n
-        [...] \n
-        Nearest neighbour (2-body) interactions should be passed as a (n_species+1,n_species+1) \n
-        Diagonal NNs in square lattices also need diagonal interactions in the same format as the J_diag kwarg \n
-        Double counting of interactions corrected internally \n
-        J_ij == J_ji but will need to access for i->j and j->i interactions \n
-        Note J[0,:] and J[:,0] must all be zero to represent absence of neighbour \n
-        For each site type the 2d array is: \n
-        [0, 0  , 0  , 0  ,...] \n
-        [0,J_11,J_12,J_13,...] \n
-        [0,J_21,J_22,J_31,...] \n
-        [0,J_31,J_32,J_33,...] \n
-        [...] \n 
-        w should be a (n_site_types,n_rxns) array like E_a \n
-        """
+        """KMC for a single-atom alloy TPD process"""
         out_i = r"""
 ______________ ___________ ___________
 \              \    ___   \     __    \
@@ -68,15 +49,17 @@ ______________ ___________ ___________
         # Error Logging
         sys.rxn_log = []
         # Check correct lattice passed
-        if not (sys.lat_type.lower() == 'triangular' and sys.sys_type.upper() == 'SAA'): raise AttributeError('This module is built for C-H activation with surface O on a PtCu (111) SAA. Make sure the correct lattice setup supplied')
+        if not (sys.lat_type.lower() == 'triangular' and sys.sys_type.upper() == 'SAA'): raise AttributeError('This module is built for a TPD simulation on a PtCu (111) SAA. Make sure the correct lattice setup supplied')
         out3 = f'Intialising {sys.lat_type} lattice system on a {sys.lat_dimensions[0]}x{sys.lat_dimensions[1]} supercell'
         # Numerical method parameters
         sys.order_guass = 5 # Default in scipy = 5
         sys.rel_tol,sys.abs_tol = 1e-6,1e-9
         sys.brentq_bracket_max = 60
+        sys.switch_lim = 5
         # sys dimensions
         sys.n_sites = len(sys.lat[:,0])
         sys.n_neighs = len(sys.neighbour_key[0,:])
+        num_site_types = 3
         ##
         ## Kinetic parameters
         ##
@@ -86,36 +69,40 @@ ______________ ___________ ___________
         }
         sys.T = Temp_function
         # check array dimensions
-        E_a = np.atleast_2d(E_a)
-        Pre_exp = np.atleast_2d(Pre_exp)
-        w_arr = np.atleast_2d(w_arr)
-        J_arr = np.atleast_3d(J_arr)
-        expect_shape = (2,2+2)
+        expect_shape = (num_site_types,2+num_site_types)
         if np.shape(E_a) != expect_shape:
             raise IndexError(f'Actvation energies input wrong, should be {expect_shape} but E_a input is {np.shape(E_a)}')
         if np.shape(E_a) != np.shape(Pre_exp):
             raise IndexError(f'Pre-exp and E_a array dimensions dont match: {np.shape(Pre_exp)} and {np.shape(E_a)}')
         # build base E_a,Pre_exp array
-        sys.E_a = np.empty((sys.n_sites,2+len(sys.neighbour_key[0])),dtype=float) # only 2+len(neighbours) process: [ads,des,diff]
-        sys.A = np.empty((sys.n_sites,2+len(sys.neighbour_key[0])),dtype=float) # only 2+len(neighbours) process: [ads,des,diff]
-        for site,site_type in enumerate(sys.lat[:,0]):
-            sys.E_a[site,0:2] = E_a[site_type,0:2]
-            sys.A[site,0:2] = Pre_exp[site_type,0:2]
+        # only 2+len(neighbours) process: [ads,des,diff]
+        sys.E_a = np.empty((sys.n_sites,2+sys.n_neighs),dtype=float)
+        sys.A = np.empty((sys.n_sites,2+sys.n_neighs),dtype=float)
+        for site in range(sys.n_sites):
+            sys.E_a[site,0:2] = E_a[sys.lat[site,0],0:2]
+            sys.A[site,0:2] = Pre_exp[sys.lat[site,0],0:2]
             for neigh_ind,neigh in enumerate(sys.neighbour_key[site,:]):
-                sys.E_a[site,2+neigh_ind] = E_a[site_type,2+sys.lat[neigh,0]]
-                sys.A[site,2+neigh_ind] = Pre_exp[site_type,2+sys.lat[neigh,0]]
+                rxn = 2+sys.lat[neigh,0] # row = initial species and col = final species
+                sys.E_a[site,2+neigh_ind] = E_a[sys.lat[site,0],rxn]
+                sys.A[site,2+neigh_ind] = Pre_exp[sys.lat[site,0],rxn]
         sys.n_proc = len(sys.E_a[0,:])
         # NN coupling matrix and TS factor
-        if np.shape(J_arr) != (2,2,2):
+        if np.shape(J_arr) != (num_site_types,num_site_types,2,2):
             raise IndexError('J_arr should be (n_site_types,n_species+1,n_species+1)')
         else:
             sys.J_BEP = J_arr
-        if np.shape(w_arr) != (2,8):
+        if np.shape(w_arr) != expect_shape:
             raise IndexError('w_arr should be (n_site_types,n_processes)')
         else:
-            sys.w_BEP = w_arr
+            sys.w_BEP = np.empty((num_site_types,num_site_types,2+sys.n_neighs),dtype=float)
+            for site_type1 in range(num_site_types):
+                # site == new_site rxns
+                sys.w_BEP[0:3,site_type1,0:2] = w_arr[0:3,0:2]
+                for site_type2 in range(num_site_types): # finish this
+                    # site != new_site rxns
+                    sys.w_BEP[site_type1,site_type2,2:2+sys.n_neighs] = [w_arr[site_type1,2+site_type2]]*sys.n_neighs
         # build base BEP contribution to E_a, will be updated each step
-        sys.E_BEP = np.empty((sys.n_sites,2+len(sys.neighbour_key[0])),dtype=float)
+        sys.E_BEP = np.empty((sys.n_sites,2+sys.n_neighs),dtype=float)
         for site in range(sys.n_sites):
             sys.E_BEP = sys._lateral_interactions_update(sys.E_BEP,sys.lat,site,site)
         out4 = f'Kinetic parameters saved in {np.shape(sys.E_a)[0]}x{np.shape(sys.E_a)[1]} array'
@@ -182,17 +169,18 @@ ______________ ___________ ___________
         sites_to_update.add(site)
         if new_site != site: sites_to_update.union(set(sys.neighbour_key[new_site,:]))
         for s in sites_to_update:
-            lat_i = lattice.copy()
+            E_BEP[s,:] = 0.0
+            lat_int_i = sys._lateral_int(lattice,s)
             for rxn in sys.species_rxns[lattice[s,1]]:
-                lat_f,_,_ = sys._rxn_step(lat_i,s,rxn,None)
-                E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],rxn]*(sys._lateral_int(lat_f,s)-sys._lateral_int(lat_i,s))
+                lat_f,s_f,_ = sys._rxn_step(lattice.copy(),s,rxn,None)
+                E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],lattice[s_f,0],rxn]*(sys._lateral_int(lat_f,s)-lat_int_i)
         return E_BEP
 
     def _lateral_int(sys,lattice:np.ndarray,site:int):
         NN = sys._get_neigh_set(site)
-        F_NN = 0
+        F_NN = 0.0
         for s in NN:
-            F_NN += 0.5*sys.J_BEP[lattice[site,0],lattice[site,1],lattice[s,1]] # 0.5 since we are using the 2 body interaction energy
+            F_NN += 0.5*sys.J_BEP[lattice[site,0],lattice[s,0],lattice[site,1],lattice[s,1]] # 0.5 since we are using the 2 body interaction energy
         return F_NN
 
     #####################################
@@ -384,7 +372,7 @@ ______________ ___________ ___________
     
     def _FRM_generate_queue(sys,lattice:np.ndarray,E_BEP:np.ndarray,guess_method:str):
         sortlist = SortedList(key=lambda tup:tup[0]) # sort list based on first tuple entry (time)
-        site_keys = {site:[] for site in range(len(sys.lat[:,0]))} # site -> IDs
+        site_keys = {site:[] for site in range(sys.n_sites)} # site -> IDs
         for site in range(sys.n_sites):
             for rxn in sys.species_rxns[lattice[site,1]]:
                 if sys._check_allowed(site,rxn,lattice):
@@ -449,15 +437,14 @@ ______________ ___________ ___________
         """
         print(f'Starting DM with {guess} guess scheme for {sys.runs} runs ...')
         data = {}
-        lat_initial = sys.lat.copy()
         # Guess switching
         switch = False
         if guess == 'switch':
             print('Guess swicth-scheme ON')
-            guess,switch,switch_limit = 'DM',True,5
+            guess,switch,switch_limit = 'DM',True,sys.switch_lim
         for run in range(sys.runs):
             #Initialise
-            lat = lat_initial.copy()
+            lat = sys.lat.copy()
             E_BEP = sys.E_BEP.copy()
             c,c_count = sys._DM_gen_c_array(lat)
             t,n,site,new_site,plot_ind=0.0,0,0,0,0
@@ -487,7 +474,7 @@ ______________ ___________ ___________
                 E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
                 n += 1
             if report: print(f'run{run}: n={n}, t={t}')
-            if switch: guess = 'DM' # swicth back to improved guess for next run
+            if switch: guess = 'DM' # switch back to improved guess for next run
             # save run data
             run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}']
             run_data = {
@@ -509,9 +496,8 @@ ______________ ___________ ___________
         """
         print(f'Starting FRM with {guess} guess scheme for {sys.runs} runs ...')
         data = {}
-        lat_initial = sys.lat.copy()
         for run in range(sys.runs):
-            lat = lat_initial.copy()
+            lat = sys.lat.copy()
             E_BEP = sys.E_BEP.copy()
             t,n,plot_ind=0.0,0,0
             adatoms = np.sum(lat[:,1])
@@ -548,7 +534,7 @@ ______________ ___________ ___________
     ### Benchmarking funcs ###
     ##########################
 
-    def run_DM_no_data(sys,guess:str='TI'):
+    def run_DM_benchmark(sys,guess:str='TI'):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the Direct method \n
         Returns a (4*runs) column dataframe of time, temp, coverage and desorption rate \n
@@ -557,20 +543,23 @@ ______________ ___________ ___________
         """
         print(f'Starting DM with {guess} guess scheme for {sys.runs} runs ...')
         print('Note: this is for benchmarking - I\'m not saving any data!')
-        lat_initial = sys.lat.copy()
+        guess_scheme = guess
+        bench_CPU,bench_wall,n_steps = [],[],[]
         # Guess switching
         switch = False
         if guess == 'switch':
             print('Guess swicth-scheme ON')
-            guess,switch,switch_limit = 'DM',True,5
+            guess,switch,switch_limit = 'DM',True,sys.switch_lim
         for run in range(sys.runs):
             #Initialise
-            lat = lat_initial.copy()
+            lat = sys.lat.copy()
             E_BEP = sys.E_BEP.copy()
             c,c_count = sys._DM_gen_c_array(lat)
             t,n=0.0,0
             adatoms = np.sum(lat[:,1])
             counts=np.array([adatoms,0,0])
+            s_CPU = time.process_time()
+            s_wall = time.time()
             while t<sys.t_max and n<sys.n_max:
                 if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
                 if c_count == 0: print('Reactions complete (c array empty)'); break
@@ -590,11 +579,16 @@ ______________ ___________ ___________
                 c,c_count = sys._DM_c_change(lat,c,c_count,site,new_site)
                 E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
                 n += 1
-            if switch: guess = 'DM' # swicth back to improved guess for next run
+            if switch: guess = 'DM' # switch back to improved guess for next run
+            e_CPU = time.process_time()
+            e_wall = time.time()
+            bench_CPU.append(e_CPU-s_CPU)
+            bench_wall.append(e_wall-s_wall)
+            n_steps.append(n)
         print('DM runs complete')
-        return
+        return {'CPU':bench_CPU,'wall':bench_wall,'steps':n_steps,'guess':guess_scheme}
     
-    def run_FRM_no_data(sys,guess:str='FRM'):
+    def run_FRM_benchmark(sys,guess:str='FRM'):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the First reaction method \n
         Returns a 4*runs column dataframe of time, temp, coverage and desorption rate \n
@@ -603,15 +597,17 @@ ______________ ___________ ___________
         """
         print(f'Starting FRM with {guess} guess scheme for {sys.runs} runs ...')
         print('Note: this is for benchmarking - I\'m not saving any data!')
-        lat_initial = sys.lat.copy()
+        bench_CPU,bench_wall,n_steps = [],[],[]
         for run in range(sys.runs):
-            lat = lat_initial.copy()
+            lat = sys.lat.copy()
             E_BEP = sys.E_BEP.copy()
             t,n=0.0,0
             adatoms = np.sum(lat)
             counts=np.array([adatoms,0,0])
             # Initialise data structure
             queue,queue_IDs = sys._FRM_generate_queue(lat,E_BEP,guess)
+            s_CPU = time.process_time()
+            s_wall = time.time()
             while t<sys.t_max and n<sys.n_max:
                 # Choose reaction and time
                 if len(queue)==0:print('Reactions complete (reaction queue empty)'); break
@@ -621,9 +617,14 @@ ______________ ___________ ___________
                 lat,new_site,counts = sys._rxn_step(lat,site,rxn,counts)
                 queue,queue_IDs,E_BEP = sys._FRM_update(queue,queue_IDs,t,site,new_site,lat,E_BEP,guess)
                 n += 1
+            e_CPU = time.process_time()
+            e_wall = time.time()
+            bench_CPU.append(e_CPU-s_CPU)
+            bench_wall.append(e_wall-s_wall)
+            n_steps.append(n)
         print('FRM runs complete')
-        return
-
+        return {'CPU':bench_CPU,'wall':bench_wall,'steps':n_steps,'guess':guess}
+    
     #################
     ## Single loop ##
     #################
@@ -700,22 +701,22 @@ ______________ ___________ ___________
             to_update.update(sys.NNs2nd(new_site))
         for s in to_update:
             E_BEP[s,:] = 0.0
+            lat_int_i = sys._lateral_int_2NNS(lattice,s)
             for rxn in sys.species_rxns[lattice[s,1]]:
                 if sys._check_allowed(s,rxn,lattice): # only updated allowed reactions?
-                    lat_i = lattice.copy()
-                    lat_f,_,_ = sys._rxn_step(lat_i.copy(),s,rxn,None)
-                    E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],rxn]*(sys._lateral_int_2NNS(lat_f,s)-sys._lateral_int_2NNS(lat_i,s))
+                    lat_f,s_f,_ = sys._rxn_step(lattice.copy(),s,rxn,None)
+                    E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],lattice[s_f,0],rxn]*(sys._lateral_int_2NNS(lat_f,s)-lat_int_i)
         return E_BEP
 
     def _lateral_int_2NNS(sys,lattice:np.ndarray,site:int):
         NN = set(sys.neighbour_key[site,:])
         NNs2 = sys.NNs2nd(site)
-        F_NN = 0
+        F_NN = 0.0
         # 0.5 since we are using the 2 body interaction energy
         for s in NN: # 1st NN interactions
-            F_NN += 0.5*sys.J_BEP[lattice[site,0],lattice[site,1],lattice[s,1]]
+            F_NN += 0.5*sys.J_BEP[lattice[site,0],lattice[s,0],lattice[site,1],lattice[s,1]]
         for s in NNs2: # 2nd NN interactions
-            F_NN += 0.5*sys.J_BEP2[lattice[site,0],lattice[site,1],lattice[s,1]]
+            F_NN += 0.5*sys.J_BEP2[lattice[site,0],lattice[s,0],lattice[site,1],lattice[s,1]]
         return float(F_NN)
 
     def run_DM_2NNs(sys,J_2NNs:np.ndarray,guess:str='TI',report:bool=False):
@@ -731,7 +732,6 @@ ______________ ___________ ___________
             raise ValueError('Wrong shape of 2nd NN lateral interactions, make sure this matches the 1st NNs array!')
         else:
             sys.J_BEP2 = J_2NNs
-        lat_initial = sys.lat.copy()
         E_BEP_initial = np.empty((np.shape(sys.E_BEP)),dtype=float)
         for site in range(sys.n_sites):
             E_BEP_initial = sys._lateral_interactions_update_2NNs(E_BEP_initial,sys.lat,site,site)
@@ -739,10 +739,10 @@ ______________ ___________ ___________
         switch = False
         if guess == 'switch':
             print('Guess swicth-scheme ON')
-            guess,switch,switch_limit = 'DM',True,5
+            guess,switch,switch_limit = 'DM',True,sys.switch_lim
         for run in range(sys.runs):
             #Initialise
-            lat = lat_initial.copy()
+            lat = sys.lat.copy()
             E_BEP = E_BEP_initial.copy() # gen this new w/ new lat ints
             c,c_count = sys._DM_gen_c_array(lat)
             t,n,site,new_site,plot_ind=0.0,0,0,0,0
@@ -798,12 +798,11 @@ ______________ ___________ ___________
             raise ValueError('Wrong shape of 2nd NN lateral interactions, make sure this matches the 1st NNs array!')
         else:
             sys.J_BEP2 = J_2NNs
-        lat_initial = sys.lat.copy()
         E_BEP_initial = np.empty((np.shape(sys.E_BEP)),dtype=float)
         for site in range(sys.n_sites):
             E_BEP_initial = sys._lateral_interactions_update_2NNs(E_BEP_initial,sys.lat,site,site)
         for run in range(sys.runs):
-            lat = lat_initial.copy()
+            lat = sys.lat.copy()
             E_BEP = E_BEP_initial.copy() # gen this new w/ new lat ints
             t,n,plot_ind=0.0,0,0
             adatoms = np.sum(lat[:,1])
@@ -913,7 +912,7 @@ ______________ ___________ ___________
             counts[site] += 1
         counts = counts/self.n_sites
         thetas = {i:float(counts[i]) for i in range(max_id)}
-        print('{Species : fractional coverage} key is ...')
+        print('{Species : fractional coverage} key is:')
         print(thetas)
     
     def what_params(params,see_lattice=False):
