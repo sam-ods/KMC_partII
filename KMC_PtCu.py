@@ -68,7 +68,6 @@ _________        _________
         for species in range(1,num_species):
             # no allowed reactions for species 0
             sys.species_rxns[species].update(sys._get_rxn_key(0,species).keys())
-
         ##
         ## Kinetic parameters
         ##
@@ -124,7 +123,7 @@ _________        _________
         for site in range(sys.n_sites):
             sys.E_BEP = sys._lateral_interactions_update(sys.E_BEP.copy(),sys.lat,site,site)
         # build base adatom counter
-        sys.counter = np.zeros((3,14),dtype=int) # rows = site types, columns = CH4 des + species + O2 des + H2 des + OH2 des + CO des
+        sys.counter = np.zeros((num_site_types,14),dtype=int) # rows = site types, columns = CH4 des + species + O2 des + H2 des + OH2 des + CO des
         for species in range(1,10):
             for site_type,atom in zip(sys.lat[:,0],sys.lat[:,1]):
                 if atom == species:
@@ -278,7 +277,7 @@ _________        _________
             return key_OH2
         else: return set()
 
-    def _rxn_step(sys,lattice:np.ndarray,site:int,rxn_ind:int,counts:np.ndarray)->tuple[np.ndarray,int,int,np.ndarray]:
+    def _rxn_step(sys,lattice:np.ndarray,site:int,rxn_ind:int,counts:np.ndarray)->tuple[np.ndarray,int,np.ndarray]:
         """Updates the lattice according to the chosen reaction \n
         returns the updated lattice
         """
@@ -632,10 +631,12 @@ _________        _________
             c,c_count = sys._DM_gen_c_array(lat)
             t,n,site,new_site,plot_ind=0.0,0,0,0,0
             count = sys.counter.copy()
-            times = np.array([np.nan]*(sys.t_points))
+            times = np.full((sys.t_points),fill_value=np.nan)
             temps = times.copy()
             pop_dict = {}
-            for i in range(14): pop_dict[(0,i)] = times.copy(); pop_dict[(1,i)] = times.copy(); pop_dict[(2,i)] = times.copy()
+            for i in range(14):
+                for s in range(3):
+                    pop_dict[(s,i)] = times.copy()
             while t<sys.t_max and n<sys.n_max:
                 if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
                 if c_count == 0: print('Reactions complete (c array empty)'); break
@@ -685,7 +686,7 @@ _________        _________
             E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),sys.E_BEP.copy()
             t,n,plot_ind=0.0,0,0
             count = sys.counter.copy()
-            times = np.array([np.nan]*(sys.t_points))
+            times = np.full((sys.t_points),fill_value=np.nan)
             temps = times.copy()
             pop_dict = {}
             for i in range(14): pop_dict[(0,i)] = times.copy(); pop_dict[(1,i)] = times.copy(); pop_dict[(2,i)] = times.copy()
@@ -743,6 +744,7 @@ _________        _________
             E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),sys.E_BEP.copy()
             c,c_count = sys._DM_gen_c_array(lat)
             t,n=0.0,0
+            count = sys.counter.copy()
             s_wall = time.time()
             s_CPU = time.process_time()
             while t<sys.t_max and n<sys.n_max:
@@ -759,7 +761,7 @@ _________        _________
                 rxn_index = mu_index % sys.n_proc
                 site = mu_index // sys.n_proc
                 # Advance system state
-                lat,new_site,_ = sys._rxn_step(lat,site,rxn_index,sys.counter.copy())
+                lat,new_site,count = sys._rxn_step(lat,site,rxn_index,count)
                 # Local occ and lateral interactions change
                 c,c_count = sys._DM_c_change(lat,c,c_count,site,new_site)
                 E_a,A = sys._kinetic_param_update(lat,E_a,A,site,new_site)
@@ -789,6 +791,7 @@ _________        _________
             lat = sys.lat.copy()
             E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),sys.E_BEP.copy()
             t,n=0.0,0
+            count = sys.counter.copy()
             # Initialise data structure
             queue,queue_IDs = sys._FRM_generate_queue(lat,E_a,A,E_BEP,guess)
             s_wall = time.time()
@@ -799,7 +802,7 @@ _________        _________
                 new_t,site,rxn = queue[0]
                 t = new_t
                 # Advance state and update queue + lateral interactions
-                lat,new_site,_ = sys._rxn_step(lat,site,rxn,sys.counter.copy())
+                lat,new_site,count = sys._rxn_step(lat,site,rxn,count)
                 E_a,A = sys._kinetic_param_update(lat,E_a,A,site,new_site)
                 queue,queue_IDs,E_BEP = sys._FRM_update(queue,queue_IDs,t,site,new_site,E_a,A,E_BEP,lat,guess)
                 n += 1
@@ -819,7 +822,7 @@ _________        _________
         """Single loop benchmark\n
         Output in ns"""
         c,c_count = sys._DM_gen_c_array(lat)
-        counts = np.zeros((2,14),dtype=int)
+        counts = sys.counter.copy()
         s_WALL = time.perf_counter_ns()
         s_CPU = time.process_time_ns()
         for i in range(n_reps):
@@ -841,7 +844,7 @@ _________        _________
         """Single loop benchmark\n
         Output in ns"""
         queue,queue_IDs = sys._FRM_generate_queue(lat,E_a,A,E_BEP,guess)
-        counts = np.zeros((2,14),dtype=int)
+        counts = sys.counter.copy()
         s_WALL = time.perf_counter_ns()
         s_CPU = time.process_time_ns()
         for i in range(n_reps):
@@ -935,7 +938,7 @@ _________        _________
             c,c_count = sys._DM_gen_c_array(lat)
             t,n,site,new_site,plot_ind=0.0,0,0,0,0
             count = sys.counter.copy()
-            times = np.array([np.nan]*(sys.t_points))
+            times = np.full((sys.t_points),fill_value=np.nan)
             temps = times.copy()
             pop_dict = {}
             for i in range(14): pop_dict[(0,i)] = times.copy(); pop_dict[(1,i)] = times.copy(); pop_dict[(2,i)] = times.copy()
@@ -996,7 +999,7 @@ _________        _________
             E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),E_BEP_initial.copy()
             t,n,plot_ind=0.0,0,0
             count = sys.counter.copy()
-            times = np.array([np.nan]*(sys.t_points))
+            times = np.full((sys.t_points),fill_value=np.nan)
             temps = times.copy()
             pop_dict = {}
             for i in range(14): pop_dict[(0,i)] = times.copy(); pop_dict[(1,i)] = times.copy(); pop_dict[(2,i)] = times.copy()
@@ -1037,9 +1040,8 @@ _________        _________
             times[plot_ind] = next_save
             temps[plot_ind] = sys.T(next_save)
             for i in range(14): # all species + desoprtion counters
-                pop_dict[(0,i)][plot_ind] = counter[0,i]
-                pop_dict[(1,i)][plot_ind] = counter[1,i]
-                pop_dict[(2,i)][plot_ind] = counter[2,i]
+                for s in range(3):
+                    pop_dict[(s,i)][plot_ind] = counter[s,i]
             next_save += sys.t_step # next time to save
             plot_ind += 1 # next grid point
         return pop_dict,plot_ind

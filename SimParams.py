@@ -2,7 +2,7 @@ import numpy as np
 import math
 import copy
 
-class SimParams:
+class sim_setup:
     def __init__(self,t_max:float,n_max:int,points_to_plot:int,Lattice_dimensions:tuple,runs:int=1,rng_seed=None):
         self.t_max,self.n_max,self.runs = t_max,n_max,runs
         self.t_step , self.t_points = t_max/points_to_plot , points_to_plot+1

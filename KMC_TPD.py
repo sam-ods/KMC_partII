@@ -60,6 +60,12 @@ ______________ ___________ ___________
         sys.n_sites = len(sys.lat[:,0])
         sys.n_neighs = len(sys.neighbour_key[0,:])
         num_site_types = 3
+        # process counter
+        sys.counter = np.zeros((num_site_types,3),dtype=int)
+        sys.n_sites_per_type = np.zeros((num_site_types),dtype=int)
+        for site in range(sys.n_sites):
+            sys.counter[sys.lat[site,0],0] += sys.lat[site,1]
+            sys.n_sites_per_type[sys.lat[site,0]] += 1
         ##
         ## Kinetic parameters
         ##
@@ -155,8 +161,9 @@ ______________ ___________ ___________
         if new_site != site:
             lattice[new_site,1] = new_species
         if type(counts) == np.ndarray:
-            if rxn_ind == 0: counts[0] += 1
-            elif rxn_ind == 1: counts[0] -= 1 ; counts[1] += 1
+            if rxn_ind == 0: counts[lattice[site,0],0] += 1 # ads
+            elif rxn_ind == 1: counts[lattice[site,0],0] -= 1 ; counts[lattice[site,0],1] += 1 # des
+            else: counts[lattice[site,0],0] -= 1 ; counts[lattice[new_site,0],0] += 1  # diff
         return lattice,new_site,counts
 
     ########################################
@@ -448,17 +455,17 @@ ______________ ___________ ___________
             E_BEP = sys.E_BEP.copy()
             c,c_count = sys._DM_gen_c_array(lat)
             t,n,site,new_site,plot_ind=0.0,0,0,0,0
-            adatoms = np.sum(lat[:,1])
-            count = np.array([adatoms,0,0]) # [adatoms,total_desoprtions,last_save_desorptions]
-            times = np.array([np.nan]*(sys.t_points))
-            thetas,rates,temps = times.copy(),times.copy(),times.copy()
+            count = sys.counter.copy()
+            times = np.full((sys.t_points),fill_value=np.nan)
+            thetas = np.full((3,sys.t_points),fill_value=np.nan)
+            temps,rates,pops = times.copy(),thetas.copy(),thetas.copy()
             while t<sys.t_max and n<sys.n_max:
                 if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
                 if c_count == 0: print('Reactions complete (c array empty)'); break
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_BEP),method=guess)
                 # Save state
-                plot_ind,times,temps,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,thetas,rates)
+                plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
                 # Advance system time
                 t = new_t
                 # Global prop gen
@@ -476,12 +483,13 @@ ______________ ___________ ___________
             if report: print(f'run{run}: n={n}, t={t}')
             if switch: guess = 'DM' # switch back to improved guess for next run
             # save run data
-            run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}']
+            run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}',f'pops{run}']
             run_data = {
                 run_label[0]:times,
                 run_label[1]:temps,
                 run_label[2]:thetas,
-                run_label[3]:rates
+                run_label[3]:rates,
+                run_label[4]:pops
             }
             data.update(run_data)
         print('DM runs complete')
@@ -500,10 +508,10 @@ ______________ ___________ ___________
             lat = sys.lat.copy()
             E_BEP = sys.E_BEP.copy()
             t,n,plot_ind=0.0,0,0
-            adatoms = np.sum(lat[:,1])
-            count = np.array([adatoms,0,0]) # [adatoms,total_desoprtions,last_save_desorptions]
-            times = np.array([np.nan]*(sys.t_points))
-            thetas,rates,temps = times.copy(),times.copy(),times.copy()
+            count = sys.counter.copy()
+            times = np.full((sys.t_points),fill_value=np.nan)
+            thetas = np.full((3,sys.t_points),fill_value=np.nan)
+            temps,rates,pops = times.copy(),thetas.copy(),thetas.copy()
             # Initialise data structure
             queue,queue_IDs = sys._FRM_generate_queue(lat,E_BEP,guess)
             while t<sys.t_max and n<sys.n_max:
@@ -511,7 +519,7 @@ ______________ ___________ ___________
                 if len(queue)==0:print('Reactions complete (reaction queue empty)'); break
                 new_t,site,rxn = queue[0]
                 # Save state
-                plot_ind,times,temps,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,thetas,rates)
+                plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
                 # Advance state and update queue + lateral interactions
                 t = new_t
                 lat,new_site,count = sys._rxn_step(lat,site,rxn,count)
@@ -519,12 +527,13 @@ ______________ ___________ ___________
                 n += 1
             if report: print(f'run{run}: n={n}, t={t}')
             # save run data
-            run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}']
+            run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}',f'pops{run}']
             run_data = {
                 run_label[0]:times,
                 run_label[1]:temps,
                 run_label[2]:thetas,
-                run_label[3]:rates
+                run_label[3]:rates,
+                run_label[4]:pops
             }
             data.update(run_data)
         print('FRM runs complete')
@@ -633,7 +642,7 @@ ______________ ___________ ___________
         """Single loop benchmark\n
         Output in ns"""
         c,c_count = sys._DM_gen_c_array(lat)
-        counts = np.array([0,0,0])
+        counts = sys.counter.copy()
         s_WALL = time.perf_counter_ns()
         s_CPU = time.process_time_ns()
         for i in range(n_reps):
@@ -653,7 +662,7 @@ ______________ ___________ ___________
     def SL_FRM(sys,lat:np.ndarray,E_BEP:np.ndarray,guess:str,n_reps:int=100):
         """Single loop benchmark\n
         Output in ns"""
-        counts = np.array([0,0,0])
+        counts = sys.counter.copy()
         queue,queue_IDs = sys._FRM_generate_queue(lat,E_BEP,guess)
         s_WALL = time.time_ns()
         s_CPU = time.process_time_ns()
@@ -746,17 +755,17 @@ ______________ ___________ ___________
             E_BEP = E_BEP_initial.copy() # gen this new w/ new lat ints
             c,c_count = sys._DM_gen_c_array(lat)
             t,n,site,new_site,plot_ind=0.0,0,0,0,0
-            adatoms = np.sum(lat[:,1])
-            count = np.array([adatoms,0,0]) # [adatoms,total_desoprtions,last_save_desorptions]
-            times = np.array([np.nan]*(sys.t_points))
-            thetas,rates,temps = times.copy(),times.copy(),times.copy()
+            count = sys.counter.copy()
+            times = np.full((sys.t_points),fill_value=np.nan)
+            thetas = np.full((3,sys.t_points),fill_value=np.nan)
+            temps,rates,pops = times.copy(),thetas.copy(),thetas.copy()
             while t<sys.t_max and n<sys.n_max:
                 if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
                 if c_count == 0: print('Reactions complete (c array empty)'); break
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_BEP),method=guess)
                 # Save state
-                plot_ind,times,temps,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,thetas,rates)
+                plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
                 # Advance system time
                 t = new_t
                 # Global prop gen
@@ -774,12 +783,13 @@ ______________ ___________ ___________
             if report: print(f'run{run}: n={n}, t={t}')
             if switch: guess = 'DM' # swicth back to improved guess for next run
             # save run data
-            run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}']
+            run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}',f'pops{run}']
             run_data = {
                 run_label[0]:times,
                 run_label[1]:temps,
                 run_label[2]:thetas,
-                run_label[3]:rates
+                run_label[3]:rates,
+                run_label[4]:pops
             }
             data.update(run_data)
         print('DM runs complete')
@@ -805,10 +815,10 @@ ______________ ___________ ___________
             lat = sys.lat.copy()
             E_BEP = E_BEP_initial.copy() # gen this new w/ new lat ints
             t,n,plot_ind=0.0,0,0
-            adatoms = np.sum(lat[:,1])
-            count = np.array([adatoms,0,0]) # [adatoms,total_desoprtions,last_save_desorptions]
-            times = np.array([np.nan]*(sys.t_points))
-            thetas,rates,temps = times.copy(),times.copy(),times.copy()
+            count = sys.counter.copy()
+            times = np.full((sys.t_points),fill_value=np.nan)
+            thetas = np.full((3,sys.t_points),fill_value=np.nan)
+            temps,pops,rates = times.copy(),thetas.copy(),thetas.copy()
             # Initialise data structure
             queue,queue_IDs = sys._FRM_generate_queue(lat,E_BEP,guess)
             while t<sys.t_max and n<sys.n_max:
@@ -816,7 +826,7 @@ ______________ ___________ ___________
                 if len(queue)==0:print('Reactions complete (reaction queue empty)'); break
                 new_t,site,rxn = queue[0]
                 # Save state
-                plot_ind,times,temps,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,thetas,rates)
+                plot_ind,times,temps,pops,thetas,rates = sys._save_state(t,new_t,count,plot_ind,times,temps,pops,thetas,rates)
                 # Advance state and update queue + lateral interactions
                 t = new_t
                 lat,new_site,count = sys._rxn_step(lat,site,rxn,count)
@@ -824,12 +834,13 @@ ______________ ___________ ___________
                 n += 1
             if report: print(f'run{run}: n={n}, t={t}')
             # save run data
-            run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}']
+            run_label = [f'time{run}',f'temp{run}',f'theta{run}',f'rate{run}',f'pops{run}']
             run_data = {
                 run_label[0]:times,
                 run_label[1]:temps,
                 run_label[2]:thetas,
-                run_label[3]:rates
+                run_label[3]:rates,
+                run_label[4]:pops
             }
             data.update(run_data)
         print('FRM runs complete')
@@ -838,35 +849,49 @@ ______________ ___________ ___________
     ##################
     ### Data funcs ###
     ##################
-    def _save_state(sys,t:float,new_t:float,counter:np.ndarray,plot_ind:int,times:np.ndarray,temps:np.ndarray,thetas:np.ndarray,rates:np.ndarray):
-        theta_save = counter[0]/sys.n_sites
-        rate_save = (counter[1]-counter[2])/(new_t-t) if (new_t-t) != 0 else 0
+    def _save_state(
+            sys,t:float,
+            new_t:float,
+            counter:np.ndarray,
+            plot_ind:int,
+            times:np.ndarray,
+            temps:np.ndarray,
+            pops:np.ndarray,
+            thetas:np.ndarray,
+            rates:np.ndarray
+        ):
+        pops_save = counter[0:3,0]
+        theta_save = pops_save/sys.n_sites_per_type
+        rate_save = (counter[0:3,1]-counter[0:3,2])/(new_t-t) if (new_t-t) != 0 else 0
         next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
         while next_save<new_t and plot_ind<sys.t_points:
             # save values of interest
-            thetas[plot_ind] = theta_save
-            rates[plot_ind] = rate_save
+            pops[0:3,plot_ind] = pops_save[:]
+            thetas[0:3,plot_ind] = theta_save[:]
+            rates[0:3,plot_ind] = rate_save[:]
             times[plot_ind] = next_save
             temps[plot_ind] = sys.T(next_save)
             next_save += sys.t_step # next time to save
             plot_ind += 1 # next grid point
-        counter[2] = counter[1] # reset counts
-        return plot_ind,times,temps,thetas,rates
+        counter[0:3,2] = counter[0:3,1] # reset counts
+        return plot_ind,times,temps,pops,thetas,rates
         
     def get_avg(sys,data):
         """Calculates the averages of each column in a KMC data output \n
         Make sure the data comes from this system
         """
-        labels = np.empty((4,sys.runs),dtype=object)
+        labels = np.empty((5,sys.runs),dtype=object)
         for i in range(sys.runs):
             labels[0,i] = f'time{i}'
             labels[1,i] = f'temp{i}'
             labels[2,i] = f'theta{i}'
             labels[3,i] = f'rate{i}'
+            labels[4,i] = f'pops{i}'
         data['time avg'] = data[labels[0,:]].mean(axis=1)
         data['temp avg'] = data[labels[1,:]].mean(axis=1)
-        data['theta avg'] = data[labels[2,:]].mean(axis=1)
+        data['theta avg'] = data[labels[2,:]].mean(axis=1) # is this still the right axis?
         data['rate avg'] = data[labels[3,:]].mean(axis=1)
+        data['pops avg'] = data[labels[3,:]].mean(axis=1)
         return data
     
     def view_sq_lat(sys,site_labels=None,adatom_labels=None,lattice=None): # needs updated for helical boundaries
