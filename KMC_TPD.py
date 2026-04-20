@@ -216,7 +216,7 @@ ______________ ___________ ___________
     ### KMC functions ###
     #####################
     
-    def _t_gen(self,prop_func:callable,time:float,random_number:float,other_args:tuple,**kwargs):
+    def _t_gen(self,prop_func:callable,time:float,random_number:float,other_args:tuple,method:str='TI'):
         """Generates a new absolute time from a random time step by solving: \n
         $int_{t}^{t+delta_t}(a0(t,other_args)) + ln(r) == 0$ \n
         Uses newton root-finding method with x0 = -ln(r)/a0(t) \n
@@ -227,25 +227,21 @@ ______________ ___________ ___________
         """
         order_guass = int(self.order_guass)
         rel_tol,self.abs_tol = self.rel_tol,self.abs_tol
-        try:
-            if kwargs['method'] == 'FRM':
-                # Setup improved FRM initial guess
-                rxn,_,site,E_BEP = other_args
-                guess = time+self._FRM_improved_guess(time,random_number,(self.E_a[site,rxn]+E_BEP[site,rxn]),self.A[site,rxn])
-            elif kwargs['method'] == 'DM':
-                # Setup improved FRM initial guess
-                c,E_BEP = other_args
-                guess = time+self._DM_improved_guess(time,random_number,c,E_BEP)
-            elif kwargs['method'] == 'TI':
-                a0_t = prop_func(time,*other_args)
-                if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
-                guess = time-np.log(random_number)/a0_t
-        except KeyError:
-            # Setup intial guess (naive)
+
+        if method == 'FRM':
+            # Setup improved FRM initial guess
+            rxn,_,site,E_BEP = other_args
+            guess = time+self._FRM_improved_guess(time,random_number,(self.E_a[site,rxn]+E_BEP[site,rxn]),self.A[site,rxn])
+        elif method == 'DM':
+            # Setup improved FRM initial guess
+            c,E_BEP = other_args
+            guess = time+self._DM_improved_guess(time,random_number,c,E_BEP)
+        elif method == 'TI':
             a0_t = prop_func(time,*other_args)
             if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
             guess = time-np.log(random_number)/a0_t
-        
+        else:
+            raise ValueError('Unrecognised guess method in _t_gen:',method)
         max_tau = 10**2 * self.t_max
         if guess > max_tau: return np.inf # is this needed?
         # Define functions
@@ -667,6 +663,7 @@ ______________ ___________ ___________
         Output in ns"""
         counts = sys.counter.copy()
         queue,queue_IDs = sys._FRM_generate_queue(lat,E_BEP,guess)
+        print(f'FRM-{guess} system initialised with {len(queue)} reactions')
         s_WALL = time.time_ns()
         s_CPU = time.process_time_ns()
         for i in range(n_reps):
