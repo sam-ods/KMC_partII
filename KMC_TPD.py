@@ -241,7 +241,13 @@ ______________ ___________ ___________
             if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
             guess = time-np.log(random_number)/a0_t
         else:
-            raise ValueError('Unrecognised guess method in _t_gen:',method)
+            raise ValueError('Unrecognised guess type:',method)
+        if guess == None:
+            # Setup intial guess (naive)
+            a0_t = prop_func(time,*other_args)
+            if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
+            guess = time-np.log(random_number)/a0_t
+        
         max_tau = 10**2 * self.t_max
         if guess > max_tau: return np.inf # is this needed?
         # Define functions
@@ -305,11 +311,12 @@ ______________ ___________ ___________
             return  np.sum(ans,axis=1)
         
     def _DM_get_prop_array(sys,c_array:np.ndarray,E_BEP:np.ndarray,time:float):
-        ans = np.zeros(np.shape(c_array),dtype=np.float64)
-        np.add(sys.E_a,E_BEP,out=ans,where=c_array)
-        np.exp((-ans/(k_B*sys.T(time))),out=ans,where=c_array)
-        np.multiply(sys.A,ans,out=ans,where=c_array)
-        return np.cumsum(ans)
+        Am,Eam,Ebm = sys.A[c_array],sys.E_a[c_array],E_BEP[c_array]
+        tmp = np.empty(np.shape(Eam),dtype=np.float64)
+        np.add(Eam,Ebm,out=tmp)
+        np.exp((-tmp/(k_B*sys.T(time))),out=tmp)
+        np.multiply(Am,tmp,out=tmp)
+        return np.cumsum(tmp)
 
     def _DM_site_c(
             sys,
@@ -473,8 +480,9 @@ ______________ ___________ ___________
                 a_acc = sys._DM_get_prop_array(c,E_BEP,t)
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
-                rxn_index = mu_index % sys.n_proc
-                site = mu_index // sys.n_proc
+                active_rxns = np.nonzero(c)
+                site = active_rxns[0][mu_index]
+                rxn_index = active_rxns[1][mu_index]
                 # Advance system state
                 lat,new_site,count = sys._rxn_step(lat,site,rxn_index,count)
                 # Local occ and lateral interactions change
@@ -580,8 +588,9 @@ ______________ ___________ ___________
                 a_acc = sys._DM_get_prop_array(c,E_BEP,t)
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
-                rxn_index = mu_index % sys.n_proc
-                site = mu_index // sys.n_proc
+                active_rxns = np.nonzero(c)
+                site = active_rxns[0][mu_index]
+                rxn_index = active_rxns[1][mu_index]
                 # Advance system state
                 lat,new_site,counts = sys._rxn_step(lat,site,rxn_index,counts)
                 # Local occ and lateral interactions change
@@ -649,8 +658,9 @@ ______________ ___________ ___________
             new_t = sys._t_gen(sys._DM_total_prop,0,sys.rng.random(),other_args=(c,E_BEP),method=guess)
             a_acc = sys._DM_get_prop_array(c,E_BEP,new_t)
             mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left')
-            rxn_index = mu_index % sys.n_proc
-            site = mu_index // sys.n_proc
+            active_rxns = np.nonzero(c)
+            site = active_rxns[0][mu_index]
+            rxn_index = active_rxns[1][mu_index]
             new_lat,new_site,counts = sys._rxn_step(lat.copy(),site,rxn_index,counts)
             _ = sys._DM_c_change(new_lat,c.copy(),c_count.copy(),site,new_site)
             _ = sys._lateral_interactions_update(E_BEP.copy(),new_lat,site,new_site)
@@ -736,6 +746,8 @@ ______________ ___________ ___________
         'timeX','tempX','thetaX','rateX'
         """
         print(f'Starting DM with {guess} guess scheme for {sys.runs} runs ...')
+        print('Note: this is for benchmarking - I\'m not saving any data!')
+        bench_CPU,bench_wall,n_steps = [],[],[]
         data = {}
         if np.shape(J_2NNs) != np.shape(sys.J_BEP):
             raise ValueError('Wrong shape of 2nd NN lateral interactions, make sure this matches the 1st NNs array!')
@@ -759,6 +771,8 @@ ______________ ___________ ___________
             times = np.full((sys.t_points),fill_value=np.nan)
             thetas = np.full((3,sys.t_points),fill_value=np.nan)
             temps,rates,pops = times.copy(),thetas.copy(),thetas.copy()
+            s_wall = time.time()
+            s_CPU = time.process_time()
             while t<sys.t_max and n<sys.n_max:
                 if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
                 if c_count == 0: print('Reactions complete (c array empty)'); break
@@ -772,8 +786,9 @@ ______________ ___________ ___________
                 a_acc = sys._DM_get_prop_array(c,E_BEP,t)
                 # Choose reaction
                 mu_index = np.searchsorted(a_acc,a_acc[-1]*sys.rng.random(),side='left') # binary search
-                rxn_index = mu_index % sys.n_proc
-                site = mu_index // sys.n_proc
+                active_rxns = np.nonzero(c)
+                site = active_rxns[0][mu_index]
+                rxn_index = active_rxns[1][mu_index]
                 # Advance system state
                 lat,new_site,count = sys._rxn_step(lat,site,rxn_index,count)
                 # Local occ and lateral interactions change
@@ -792,8 +807,13 @@ ______________ ___________ ___________
                 run_label[4]:pops
             }
             data.update(run_data)
+            e_wall = time.time()
+            e_CPU = time.process_time()
+            bench_CPU.append(e_CPU-s_CPU)
+            bench_wall.append(e_wall-s_wall)
+            n_steps.append(n)
         print('DM runs complete')
-        return data
+        return {'CPU':bench_CPU,'wall':bench_wall,'steps':n_steps,'guess':guess}
     
     def run_FRM_2NNs(sys,J_2NNs:np.ndarray,guess:str='FRM',report:bool=False):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
@@ -803,6 +823,8 @@ ______________ ___________ ___________
         'timeX','tempX','thetaX','rateX'
         """
         print(f'Starting FRM with {guess} guess scheme for {sys.runs} runs ...')
+        print('Note: this is for benchmarking - I\'m not saving any data!')
+        bench_CPU,bench_wall,n_steps = [],[],[]
         data = {}
         if np.shape(J_2NNs) != np.shape(sys.J_BEP):
             raise ValueError('Wrong shape of 2nd NN lateral interactions, make sure this matches the 1st NNs array!')
@@ -821,6 +843,8 @@ ______________ ___________ ___________
             temps,pops,rates = times.copy(),thetas.copy(),thetas.copy()
             # Initialise data structure
             queue,queue_IDs = sys._FRM_generate_queue(lat,E_BEP,guess)
+            s_wall = time.time()
+            s_CPU = time.process_time()
             while t<sys.t_max and n<sys.n_max:
                 # Choose reaction and time
                 if len(queue)==0:print('Reactions complete (reaction queue empty)'); break
@@ -843,8 +867,13 @@ ______________ ___________ ___________
                 run_label[4]:pops
             }
             data.update(run_data)
+            e_wall = time.time()
+            e_CPU = time.process_time()
+            bench_CPU.append(e_CPU-s_CPU)
+            bench_wall.append(e_wall-s_wall)
+            n_steps.append(n)
         print('FRM runs complete')
-        return data
+        return {'CPU':bench_CPU,'wall':bench_wall,'steps':n_steps,'guess':guess}
     
     ##################
     ### Data funcs ###
