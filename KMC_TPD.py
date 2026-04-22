@@ -553,7 +553,7 @@ ______________ ___________ ___________
     ### Benchmarking funcs ###
     ##########################
 
-    def run_DM_benchmark(sys,guess:str='TI'):
+    def run_DM_benchmark(sys,guess:str='TI',report:bool=False):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the Direct method \n
         Returns a (4*runs) column dataframe of time, temp, coverage and desorption rate \n
@@ -601,13 +601,14 @@ ______________ ___________ ___________
             if switch: guess = 'DM' # switch back to improved guess for next run
             e_CPU = time.process_time()
             e_wall = time.time()
+            if report: print(f'run{run}: n={n}, t={t}')
             bench_CPU.append(e_CPU-s_CPU)
             bench_wall.append(e_wall-s_wall)
             n_steps.append(n)
         print('DM runs complete')
         return {'CPU':bench_CPU,'wall':bench_wall,'steps':n_steps,'guess':guess_scheme}
     
-    def run_FRM_benchmark(sys,guess:str='FRM'):
+    def run_FRM_benchmark(sys,guess:str='FRM',report:bool=False):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the First reaction method \n
         Returns a 4*runs column dataframe of time, temp, coverage and desorption rate \n
@@ -637,6 +638,7 @@ ______________ ___________ ___________
                 n += 1
             e_CPU = time.process_time()
             e_wall = time.time()
+            if report: print(f'run{run}: n={n}, t={t}')
             bench_CPU.append(e_CPU-s_CPU)
             bench_wall.append(e_wall-s_wall)
             n_steps.append(n)
