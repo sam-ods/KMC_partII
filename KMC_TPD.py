@@ -63,9 +63,6 @@ ______________ ___________ ___________
         # process counter
         sys.counter = np.zeros((num_site_types,3),dtype=int)
         sys.n_sites_per_type = np.zeros((num_site_types),dtype=int)
-        for site in range(sys.n_sites):
-            sys.counter[sys.lat[site,0],0] += sys.lat[site,1]
-            sys.n_sites_per_type[sys.lat[site,0]] += 1
         ##
         ## Kinetic parameters
         ##
@@ -80,37 +77,42 @@ ______________ ___________ ___________
             raise IndexError(f'Actvation energies input wrong, should be {expect_shape} but E_a input is {np.shape(E_a)}')
         if np.shape(E_a) != np.shape(Pre_exp):
             raise IndexError(f'Pre-exp and E_a array dimensions dont match: {np.shape(Pre_exp)} and {np.shape(E_a)}')
-        # build base E_a,Pre_exp array
-        # only 2+len(neighbours) process: [ads,des,diff]
+        if np.shape(J_arr) != (num_site_types,num_site_types,2,2):
+            raise IndexError('J_arr should be (n_site_types,n_species+1,n_species+1)')
+        if np.shape(w_arr) != expect_shape:
+            raise IndexError('w_arr should be (n_site_types,n_processes)')
+        ##
+        ## build arrays
+        ##
+        # site independent arrays
+        sys.w_BEP = np.empty((num_site_types,num_site_types,2+sys.n_neighs),dtype=float)
+        # w array
+        for site_type1 in range(num_site_types):
+            # site == new_site rxns
+            sys.w_BEP[0:3,site_type1,0:2] = w_arr[0:3,0:2]
+            for site_type2 in range(num_site_types):
+                # site != new_site rxns
+                sys.w_BEP[site_type1,site_type2,2:2+sys.n_neighs] = [w_arr[site_type1,2+site_type2]]*sys.n_neighs
+        # site specific arrays
         sys.E_a = np.empty((sys.n_sites,2+sys.n_neighs),dtype=float)
         sys.A = np.empty((sys.n_sites,2+sys.n_neighs),dtype=float)
+        sys.J_BEP = J_arr
+        sys.E_BEP = np.empty((sys.n_sites,2+sys.n_neighs),dtype=float)
+        sys.n_proc = len(sys.E_a[0,:])
         for site in range(sys.n_sites):
+            # Counters
+            sys.counter[sys.lat[site,0],0] += sys.lat[site,1]
+            sys.n_sites_per_type[sys.lat[site,0]] += 1
+            # Base A and E_a arrays
             sys.E_a[site,0:2] = E_a[sys.lat[site,0],0:2]
             sys.A[site,0:2] = Pre_exp[sys.lat[site,0],0:2]
             for neigh_ind,neigh in enumerate(sys.neighbour_key[site,:]):
                 rxn = 2+sys.lat[neigh,0] # row = initial species and col = final species
                 sys.E_a[site,2+neigh_ind] = E_a[sys.lat[site,0],rxn]
                 sys.A[site,2+neigh_ind] = Pre_exp[sys.lat[site,0],rxn]
-        sys.n_proc = len(sys.E_a[0,:])
-        # NN coupling matrix and TS factor
-        if np.shape(J_arr) != (num_site_types,num_site_types,2,2):
-            raise IndexError('J_arr should be (n_site_types,n_species+1,n_species+1)')
-        else:
-            sys.J_BEP = J_arr
-        if np.shape(w_arr) != expect_shape:
-            raise IndexError('w_arr should be (n_site_types,n_processes)')
-        else:
-            sys.w_BEP = np.empty((num_site_types,num_site_types,2+sys.n_neighs),dtype=float)
-            for site_type1 in range(num_site_types):
-                # site == new_site rxns
-                sys.w_BEP[0:3,site_type1,0:2] = w_arr[0:3,0:2]
-                for site_type2 in range(num_site_types): # finish this
-                    # site != new_site rxns
-                    sys.w_BEP[site_type1,site_type2,2:2+sys.n_neighs] = [w_arr[site_type1,2+site_type2]]*sys.n_neighs
-        # build base BEP contribution to E_a, will be updated each step
-        sys.E_BEP = np.empty((sys.n_sites,2+sys.n_neighs),dtype=float)
-        for site in range(sys.n_sites):
+            # lateral interactions
             sys.E_BEP = sys._lateral_interactions_update(sys.E_BEP,sys.lat,site,site)
+        # NN coupling matrix and TS factor
         out4 = f'Kinetic parameters saved in {np.shape(sys.E_a)[0]}x{np.shape(sys.E_a)[1]} array'
         # fancy message
         length = max([len(out1)+4,len(out2)+4,len(out3)+4,len(out4)+4])
