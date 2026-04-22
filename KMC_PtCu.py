@@ -111,24 +111,19 @@ _________        _________
                             sys.A_ref[site_type1,site_type2,species,i:i+sys.n_neighs] = [ds*Pre_exp[site_type1,site_type2,species,rxn]]*sys.n_neighs
                             sys.w_BEP[site_type1,site_type2,species,i:i+sys.n_neighs] = [w_arr[site_type1,site_type2,species,rxn]]*sys.n_neighs
                     i += sys.n_neighs
-        # build initial E_a and A arrays
+        # build initial arrays
         sys.E_a = np.empty((sys.n_sites,n_rxns),dtype=float) 
-        sys.A = np.empty((sys.n_sites,n_rxns),dtype=float) 
+        sys.A = np.empty((sys.n_sites,n_rxns),dtype=float)
+        sys.E_BEP = np.zeros((sys.n_sites,n_rxns),dtype=float)
+        sys.n_proc = len(sys.E_a[0,:])
+        sys.counter = np.zeros((num_site_types,14),dtype=int) # rows = site types, columns = CH4 des + species + O2 des + H2 des + OH2 des + CO des
         for site in range(sys.n_sites):
             sys.E_a,sys.A = sys._kinetic_param_update(sys.lat,sys.E_a,sys.A,site,site)
-        out4 = f'Kinetic parameters saved in {np.shape(sys.E_a)[0]}x{np.shape(sys.E_a)[1]} array'
-        sys.n_proc = len(sys.E_a[0,:])
-        # build base BEP contribution to E_a, will be updated each step
-        sys.E_BEP = np.zeros((sys.n_sites,n_rxns),dtype=float)
-        for site in range(sys.n_sites):
             sys.E_BEP = sys._lateral_interactions_update(sys.E_BEP.copy(),sys.lat,site,site)
-        # build base adatom counter
-        sys.counter = np.zeros((num_site_types,14),dtype=int) # rows = site types, columns = CH4 des + species + O2 des + H2 des + OH2 des + CO des
-        for species in range(1,10):
-            for site_type,atom in zip(sys.lat[:,0],sys.lat[:,1]):
-                if atom == species:
-                    sys.counter[site_type,species] += 1
-        
+            for species in range(1,10):
+                if sys.lat[site,1] == species:
+                    sys.counter[sys.lat[site,0],species] += 1
+        out4 = f'Kinetic parameters saved in {np.shape(sys.E_a)[0]}x{np.shape(sys.E_a)[1]} array'
         # fancy message
         length = max([len(out1)+4,len(out2)+4,len(out3)+4,len(out4)+4])
         space1,remain1,space2,remain2 = (length - len(out1)+4)//2, (length - len(out1)+4)%2, (length - len(out2)+4)//2, (length - len(out2)+4)%2
