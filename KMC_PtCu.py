@@ -920,6 +920,8 @@ _________        _________
         'timeX','tempX','thetaX','rateX'
         """
         print(f'Starting DM with {guess} guess scheme for {sys.runs} runs ...')
+        print('Note: this is for benchmarking - I\'m not saving any data!')
+        bench_CPU,bench_wall,n_steps = [],[],[]
         data = {}
         if np.shape(J_2NNs) != np.shape(sys.J_BEP):
             raise ValueError('Wrong shape of 2nd NN lateral interactions, make sure this matches the 1st NNs array!')
@@ -944,6 +946,8 @@ _________        _________
             temps = times.copy()
             pop_dict = {}
             for i in range(14): pop_dict[(0,i)] = times.copy(); pop_dict[(1,i)] = times.copy(); pop_dict[(2,i)] = times.copy()
+            s_wall = time.time()
+            s_CPU = time.process_time()
             while t<sys.t_max and n<sys.n_max:
                 if switch and n == switch_limit: guess = 'TI' # Swicth guess type after i-th step
                 if c_count == 0: print('Reactions complete (c array empty)'); break
@@ -978,8 +982,13 @@ _________        _________
                 run_label[2]:pop_dict
             }
             data.update(run_data)
+            e_wall = time.time()
+            e_CPU = time.process_time()
+            bench_CPU.append(e_CPU-s_CPU)
+            bench_wall.append(e_wall-s_wall)
+            n_steps.append(n)
         print('DM runs complete')
-        return data
+        return {'CPU':bench_CPU,'wall':bench_wall,'steps':n_steps,'guess':guess}
     
     def run_FRM_2NNs(sys,J_2NNs:np.ndarray,guess:str='FRM',report:bool=False):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
@@ -989,6 +998,8 @@ _________        _________
         'timeX','tempX','thetaX','rateX'
         """
         print(f'Starting FRM with {guess} guess scheme for {sys.runs} runs ...')
+        print('Note: this is for benchmarking - I\'m not saving any data!')
+        bench_CPU,bench_wall,n_steps = [],[],[]
         data = {}
         if np.shape(J_2NNs) != np.shape(sys.J_BEP):
             raise ValueError('Wrong shape of 2nd NN lateral interactions, make sure this matches the 1st NNs array!')
@@ -1008,6 +1019,8 @@ _________        _________
             for i in range(14): pop_dict[(0,i)] = times.copy(); pop_dict[(1,i)] = times.copy(); pop_dict[(2,i)] = times.copy()
             # Initialise data structure
             queue,queue_IDs = sys._FRM_generate_queue(lat,E_a,A,E_BEP,guess)
+            s_wall = time.time()
+            s_CPU = time.process_time()
             while t<sys.t_max and n<sys.n_max:
                 # Choose reaction and time
                 if len(queue)==0: print('Reactions complete (reaction queue empty)'); break
@@ -1029,8 +1042,13 @@ _________        _________
                 run_label[2]:pop_dict
             }
             data.update(run_data)
+            e_wall = time.time()
+            e_CPU = time.process_time()
+            bench_CPU.append(e_CPU-s_CPU)
+            bench_wall.append(e_wall-s_wall)
+            n_steps.append(n)
         print(f'FRM runs complete')
-        return data
+        return {'CPU':bench_CPU,'wall':bench_wall,'steps':n_steps,'guess':guess}
     
     ##################
     ### Data funcs ###
