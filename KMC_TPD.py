@@ -112,7 +112,6 @@ ______________ ___________ ___________
                 sys.A[site,2+neigh_ind] = Pre_exp[sys.lat[site,0],rxn]
             # lateral interactions
             sys.E_BEP = sys._lateral_interactions_update(sys.E_BEP,sys.lat,site,site)
-        # NN coupling matrix and TS factor
         out4 = f'Kinetic parameters saved in {np.shape(sys.E_a)[0]}x{np.shape(sys.E_a)[1]} array'
         # fancy message
         length = max([len(out1)+4,len(out2)+4,len(out3)+4,len(out4)+4])
