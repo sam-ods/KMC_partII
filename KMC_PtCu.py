@@ -48,7 +48,7 @@ _________        _________
         out3 = f'Intialising {sys.lat_type} lattice system on a {sys.lat_dimensions[0]}x{sys.lat_dimensions[1]} supercell'
         # Numerical method parameters
         sys.order_guass = 5 # Default in scipy = 5
-        sys.rel_tol,sys.abs_tol = 1e-6,1e-9
+        sys.rel_tol,sys.abs_tol = 1e-9,1e-12
         sys.brentq_bracket_max = 60
         sys.switch_lim = 5
         ##
@@ -295,7 +295,7 @@ _________        _________
                 if 24<=rxn_ind<=41:
                     counts[lattice[site,0],old_species+1] += 1; counts[lattice[site,0],old_species] -= 1 # H loss
                     if rxn_ind<=29: counts[lattice[site,0],7] += 1 # *
-                    elif 39<rxn_ind<=35: counts[lattice[site,0],5] -= 1; counts[lattice[site,0],6] += 1 # + O
+                    elif 29<rxn_ind<=35: counts[lattice[site,0],5] -= 1; counts[lattice[site,0],6] += 1 # + O
                     else: counts[lattice[site,0],6] -= 1; counts[lattice[site,0],9] += 1 # + OH
             if old_species == 4 and rxn_ind>23: counts[lattice[site,0],4] -= 1; counts[lattice[site,0],5] -= 1; counts[lattice[site,0],8] += 1 # CO formation
             if old_species == 5 and 6<=rxn_ind<=17:
@@ -538,9 +538,6 @@ _________        _________
         return ((temp_guess - sim_temp)/(beta)).real
 
     ## FRM funcs ##
-    def _k(sys,site:int,rxn:int,E_a:np.ndarray,A:np.ndarray,E_BEP:np.ndarray,time:float)->np.ndarray:
-        return A[site,rxn]*np.exp(-(E_a[site,rxn]+E_BEP[site,rxn])/(k_B*sys.T(time)))
-    
     def _FRM_generate_queue(sys,lattice:np.ndarray,E_a:np.ndarray,A:np.ndarray,E_BEP:np.ndarray,guess_method:str):
         sortlist =  SortedList(key=lambda tup:tup[0]) # sort list based on first tuple entry (time)
         site_keys = {site:[] for site in range(sys.n_sites)} # site -> IDs
@@ -555,16 +552,12 @@ _________        _________
             sys,
             time:float,
             rxn:int,
-            lattice:np.ndarray,
             site:int,
             E_a:np.ndarray,
             A:np.ndarray,
             E_BEP:np.ndarray
         )->float:
-        if sys._check_allowed(site,rxn,lattice):
-            return sys._k(site,rxn,E_a,A,E_BEP,time)
-        else:
-            return 0
+        return A[site,rxn]*np.exp(-(E_a[site,rxn]+E_BEP[site,rxn])/(k_B*sys.T(time)))
     
     def _FRM_update(sys,sortlist:SortedList,site_keys:dict,time:float,site:int,new_site:int,E_a:np.ndarray,A:np.ndarray,E_BEP:np.ndarray,lattice:np.ndarray,guess_method:str):
         # update lateral interactions

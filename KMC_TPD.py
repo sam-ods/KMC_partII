@@ -53,7 +53,7 @@ ______________ ___________ ___________
         out3 = f'Intialising {sys.lat_type} lattice system on a {sys.lat_dimensions[0]}x{sys.lat_dimensions[1]} supercell'
         # Numerical method parameters
         sys.order_guass = 5 # Default in scipy = 5
-        sys.rel_tol,sys.abs_tol = 1e-6,1e-9
+        sys.rel_tol,sys.abs_tol = 1e-9,1e-12
         sys.brentq_bracket_max = 60
         sys.switch_lim = 5
         # sys dimensions
@@ -112,6 +112,7 @@ ______________ ___________ ___________
                 sys.A[site,2+neigh_ind] = Pre_exp[sys.lat[site,0],rxn]
             # lateral interactions
             sys.E_BEP = sys._lateral_interactions_update(sys.E_BEP,sys.lat,site,site)
+        # NN coupling matrix and TS factor
         out4 = f'Kinetic parameters saved in {np.shape(sys.E_a)[0]}x{np.shape(sys.E_a)[1]} array'
         # fancy message
         length = max([len(out1)+4,len(out2)+4,len(out3)+4,len(out4)+4])
@@ -383,8 +384,6 @@ ______________ ___________ ___________
         return ((temp_guess - sim_temp)/(beta)).real
 
     ## FRM funcs ##
-    def _k(sys,site:int,rxn:int,time:float,E_BEP:np.ndarray)->np.ndarray:
-        return sys.A[site,rxn]*np.exp(-(sys.E_a[site,rxn]+E_BEP[site,rxn])/(k_B*sys.T(time)))
     
     def _FRM_generate_queue(sys,lattice:np.ndarray,E_BEP:np.ndarray,guess_method:str):
         sortlist = SortedList(key=lambda tup:tup[0]) # sort list based on first tuple entry (time)
@@ -400,13 +399,10 @@ ______________ ___________ ___________
             sys,
             time:float,
             rxn:int,
-            lattice:np.ndarray,
             site:int,
             E_BEP:np.ndarray
         )->float:
-        c = sys._check_allowed(site,rxn,lattice)
-        k = sys._k(site,rxn,time,E_BEP)
-        return k*c
+        return sys.A[site,rxn]*np.exp(-(sys.E_a[site,rxn]+E_BEP[site,rxn])/(k_B*sys.T(time)))
     
     def _FRM_update(sys,sortlist:SortedList,site_keys:dict,time:float,site:int,new_site:int,lattice:np.ndarray,E_BEP:np.ndarray,guess_method:str):
         # update lateral interactions
@@ -601,7 +597,7 @@ ______________ ___________ ___________
             if switch: guess = 'DM' # switch back to improved guess for next run
             e_CPU = time.process_time()
             e_wall = time.time()
-            if report: print(f'run{run}: n={n}, t={t}')
+            if report: print(f'run:{run}, n={n}, t={t}')
             bench_CPU.append(e_CPU-s_CPU)
             bench_wall.append(e_wall-s_wall)
             n_steps.append(n)
