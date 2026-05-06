@@ -232,7 +232,7 @@ ______________ ___________ ___________
 
         if method == 'FRM':
             # Setup improved FRM initial guess
-            rxn,_,site,E_BEP = other_args
+            rxn,site,E_BEP = other_args
             guess = time+self._FRM_improved_guess(time,random_number,(self.E_a[site,rxn]+E_BEP[site,rxn]),self.A[site,rxn])
         elif method == 'DM':
             # Setup improved FRM initial guess
@@ -391,7 +391,7 @@ ______________ ___________ ___________
         for site in range(sys.n_sites):
             for rxn in sys.species_rxns[lattice[site,1]]:
                 if sys._check_allowed(site,rxn,lattice):
-                    rxn_time = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(rxn,lattice,site,E_BEP),method=guess_method)
+                    rxn_time = sys._t_gen(sys._FRM_site_prop,0,sys.rng.random(),(rxn,site,E_BEP),method=guess_method)
                     sortlist,site_keys = sys._FRM_insert((rxn_time,site,rxn),sortlist,site_keys)
         return sortlist,site_keys
 
@@ -419,7 +419,7 @@ ______________ ___________ ___________
             # add new reactions
             for rxn in sys.species_rxns[lattice[s,1]]:
                 if sys._check_allowed(s,rxn,lattice):
-                    rxn_time = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(rxn,lattice,s,E_BEP),method=guess_method)
+                    rxn_time = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(rxn,s,E_BEP),method=guess_method)
                     sortlist,site_keys = sys._FRM_insert((rxn_time,s,rxn),sortlist,site_keys)
         return sortlist,site_keys,E_BEP
 
@@ -660,9 +660,9 @@ ______________ ___________ ___________
             active_rxns = np.nonzero(c)
             site = active_rxns[0][mu_index]
             rxn_index = active_rxns[1][mu_index]
-            new_lat,new_site,counts = sys._rxn_step(lat.copy(),site,rxn_index,counts)
-            _ = sys._DM_c_change(new_lat,c.copy(),c_count.copy(),site,new_site)
-            _ = sys._lateral_interactions_update(E_BEP.copy(),new_lat,site,new_site)
+            lat,new_site,counts = sys._rxn_step(lat,site,rxn_index,counts)
+            c,c_count = sys._DM_c_change(lat,c,c_count,site,new_site)
+            E_BEP = sys._lateral_interactions_update(E_BEP,lat,site,new_site)
         e_CPU = time.process_time_ns()
         e_WALL = time.perf_counter_ns()
         return {'CPU':(e_CPU-s_CPU)/n_reps, 'wall':(e_WALL-s_WALL)/n_reps,'runs':n_reps}
@@ -679,8 +679,8 @@ ______________ ___________ ___________
             if len(queue)==0:print('Reactions complete (reaction queue empty)'); return np.nan
             new_t,site,rxn = queue[0]
             t = new_t
-            new_lat,new_site,counts = sys._rxn_step(lat.copy(),site,rxn,counts)
-            _ = sys._FRM_update(queue.copy(),copy.deepcopy(queue_IDs),t,site,new_site,new_lat,E_BEP.copy(),guess)
+            lat,new_site,counts = sys._rxn_step(lat,site,rxn,counts)
+            queue,queue_IDs,E_BEP = sys._FRM_update(queue,queue_IDs,t,site,new_site,lat,E_BEP,guess)
         e_CPU = time.process_time_ns()
         e_WALL = time.time_ns()
         return {'CPU':(e_CPU-s_CPU)/n_reps, 'wall':(e_WALL-s_WALL)/n_reps,'runs':n_reps}
@@ -706,7 +706,7 @@ ______________ ___________ ___________
             # add new reactions
             for rxn in sys.species_rxns[lattice[s,1]]:
                 if sys._check_allowed(s,rxn,lattice):
-                    rxn_time = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(rxn,lattice,s,E_BEP),method=guess_method)
+                    rxn_time = sys._t_gen(sys._FRM_site_prop,time,sys.rng.random(),(rxn,s,E_BEP),method=guess_method)
                     sortlist,site_keys = sys._FRM_insert((rxn_time,s,rxn),sortlist,site_keys)
         return sortlist,site_keys,E_BEP
     
