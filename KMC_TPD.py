@@ -187,7 +187,9 @@ ______________ ___________ ___________
             lat_int_i = sys._lateral_int(lattice,s)
             for rxn in sys.species_rxns[lattice[s,1]]:
                 lat_f,s_f,_ = sys._rxn_step(lattice.copy(),s,rxn,None)
-                E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],lattice[s_f,0],rxn]*(sys._lateral_int(lat_f,s)-lat_int_i)
+                n_s = sys._get_dependency_key(s,lattice[s,1])[rxn][0]
+                lat_int_correction = 2*(sys.J_BEP[lat_f[s,0],lat_f[n_s,0],lat_f[s,1],lat_f[n_s,1]]-sys.J_BEP[lattice[s,0],lattice[n_s,0],lattice[s,1],lattice[n_s,1]]) # prevents counting of reactant and product lateral interactions
+                E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],lattice[s_f,0],lattice[s,1],rxn]*(sys._lateral_int(lat_f,s)-lat_int_i+lat_int_correction)
         return E_BEP
 
     def _lateral_int(sys,lattice:np.ndarray,site:int):

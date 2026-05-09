@@ -214,7 +214,7 @@ _________        _________
         n_neighs = sys.n_neighs
         if species == 1: # CH3
             key_CH3 = {i : (neighs[i],{0}) for i in range(n_neighs)} # diff
-            key_CH3.update({i+n_neighs : (neighs[i],{7}) for i in range(n_neighs)}) # CH4 formation + * (+des)
+            key_CH3.update({i+n_neighs : (neighs[i],{7}) for i in range(n_neighs)}) # CH4 formation + H (+des)
             key_CH3.update({i+2*n_neighs : (neighs[i],{6}) for i in range(n_neighs)}) # CH4 formation + OH (+des)
             key_CH3.update({i+3*n_neighs : (neighs[i],{9}) for i in range(n_neighs)}) # CH4 formation + OH2 (+des)
             key_CH3.update({i+4*n_neighs : (neighs[i],{0}) for i in range(n_neighs)}) # C-H loss + *
@@ -223,7 +223,7 @@ _________        _________
             return key_CH3
         elif species == 2: # CH2
             key_CH2 = {i : (neighs[i],{0}) for i in range(n_neighs)} # diff
-            key_CH2.update({i+n_neighs : (neighs[i],{7}) for i in range(n_neighs)}) # C-H gain + *
+            key_CH2.update({i+n_neighs : (neighs[i],{7}) for i in range(n_neighs)}) # C-H gain + H
             key_CH2.update({i+2*n_neighs : (neighs[i],{6}) for i in range(n_neighs)}) # C-H gain + OH
             key_CH2.update({i+3*n_neighs : (neighs[i],{9}) for i in range(n_neighs)}) # C-H gain + OH2
             key_CH2.update({i+4*n_neighs : (neighs[i],{0}) for i in range(n_neighs)}) # C-H loss + *
@@ -232,7 +232,7 @@ _________        _________
             return key_CH2
         elif species == 3: # CH
             key_CH = {i : (neighs[i],{0}) for i in range(n_neighs)} # diff
-            key_CH.update({i+n_neighs : (neighs[i],{7}) for i in range(n_neighs)}) # C-H gain + *
+            key_CH.update({i+n_neighs : (neighs[i],{7}) for i in range(n_neighs)}) # C-H gain + H
             key_CH.update({i+2*n_neighs : (neighs[i],{6}) for i in range(n_neighs)}) # C-H gain + OH
             key_CH.update({i+3*n_neighs : (neighs[i],{9}) for i in range(n_neighs)}) # C-H gain + OH2
             key_CH.update({i+4*n_neighs : (neighs[i],{0}) for i in range(n_neighs)}) # C-H loss + *
@@ -241,7 +241,7 @@ _________        _________
             return key_CH
         elif species == 4: # C
             key_C = {i : (neighs[i],{0}) for i in range(n_neighs)} # diff
-            key_C.update({i+n_neighs : (neighs[i],{7}) for i in range(n_neighs)}) # C-H gain + *
+            key_C.update({i+n_neighs : (neighs[i],{7}) for i in range(n_neighs)}) # C-H gain + H
             key_C.update({i+2*n_neighs : (neighs[i],{6}) for i in range(n_neighs)}) # C-H gain + OH
             key_C.update({i+3*n_neighs : (neighs[i],{9}) for i in range(n_neighs)}) # C-H gain + OH2
             key_C.update({i+4*n_neighs : (neighs[i],{5}) for i in range(n_neighs)}) # C+O->CO
@@ -328,7 +328,9 @@ _________        _________
             for rxn in sys.species_rxns[lattice[s,1]]:
                 if sys._check_allowed(s,rxn,lattice): # only updated allowed reactions?
                     lat_f,s_f,_ = sys._rxn_step(lattice.copy(),s,rxn,None)
-                    E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],lattice[s_f,0],lattice[s,1],rxn]*(sys._lateral_int(lat_f,s)-lat_int_i)
+                    n_s = sys._get_dependency_key(s,lattice[s,1])[rxn][0]
+                    lat_int_correction = 2*(sys.J_BEP[lat_f[s,0],lat_f[n_s,0],lat_f[s,1],lat_f[n_s,1]]-sys.J_BEP[lattice[s,0],lattice[n_s,0],lattice[s,1],lattice[n_s,1]]) # prevents counting of reactant and product lateral interactions
+                    E_BEP[s,rxn] = sys.w_BEP[lattice[s,0],lattice[s_f,0],lattice[s,1],rxn]*(sys._lateral_int(lat_f,s)-lat_int_i+lat_int_correction)
         return E_BEP
 
     def _lateral_int(sys,lattice:np.ndarray,site:int):
