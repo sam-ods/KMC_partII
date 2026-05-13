@@ -85,7 +85,7 @@ class sim_setup:
             sites = int(sys.lat[:,0].size)
             dopants = math.floor(sites*density)
             if dopants < 1: raise ValueError('dopant too dilute for supercell, try including more sites')
-            if density > 1/7: raise ValueError('dopant concentration too high, some will be neighbours')
+            if density > 1/19: raise ValueError('dopant concentration too high, some will be neighbours')
             dope_sites = []
             sites_to_choose = list(range(sites))
             for i in range(dopants):
@@ -97,6 +97,11 @@ class sim_setup:
                         sites_to_choose.remove(choice_n)
                     except ValueError:
                         pass
+                    for choice_nn in sys.neigh_key[choice_n,:]:
+                        try:
+                            sites_to_choose.remove(choice_nn)
+                        except ValueError:
+                            pass
             for site in dope_sites:
                 sys.lat[site,0] = 2 # Pt atom
                 for s_n in sys.neigh_key[site,:]: sys.lat[s_n,0] = 1 # boundary Cu
