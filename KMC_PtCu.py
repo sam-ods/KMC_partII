@@ -446,9 +446,9 @@ _________        _________
         if new_site != site:
             for rxn in sys.species_rxns[lattice[new_site,1]]:
                 if (site_species == 8 and rxn == 2*sys.n_neighs) or (site_species == 9 and rxn == 2*sys.n_neighs):
-                    s_f = site
+                    s_f = new_site
                 else:
-                    s_f = sys.neighbour_key[site,rxn%sys.n_neighs]
+                    s_f = sys.neighbour_key[new_site,rxn%sys.n_neighs]
                 E_a[new_site,rxn] = sys.Ea_ref[lattice[new_site,0],lattice[s_f,0],lattice[new_site,1],rxn]
                 A[new_site,rxn] = sys.A_ref[lattice[new_site,0],lattice[s_f,0],lattice[new_site,1],rxn]
         return E_a,A
