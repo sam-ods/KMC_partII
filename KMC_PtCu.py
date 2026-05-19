@@ -651,13 +651,12 @@ _________        _________
             if report: print(f'run{run}: n={n}, t={t}')
             if switch: guess = 'DM' # swicth back to improved guess for next run
             # save run data
-            run_label = [f'time{run}',f'temp{run}',f'pops{run}']
             run_data = {
-                run_label[0]:times,
-                run_label[1]:temps,
-                run_label[2]:pop_dict
+                'times':times,
+                'temps':temps,
+                'pops':pop_dict
             }
-            data.update(run_data)
+            data[f'run{run}'] = run_data
         print('DM runs complete')
         return data
     
@@ -696,13 +695,12 @@ _________        _________
                 n += 1
             if report: print(f'run{run}: n={n}, t={t}')
             # save run data
-            run_label = [f'time{run}',f'temp{run}',f'pops{run}']
             run_data = {
-                run_label[0]:times,
-                run_label[1]:temps,
-                run_label[2]:pop_dict
+                'times':times,
+                'temps':temps,
+                'pops':pop_dict
             }
-            data.update(run_data)
+            data[f'run{run}'] = run_data
         print(f'FRM runs complete')
         return data
     
