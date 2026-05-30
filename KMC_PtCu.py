@@ -277,6 +277,7 @@ _________        _________
         returns the updated lattice
         """
         old_species = lattice[site,1]
+        neigh_site_type = lattice[rxn_ind % sys.n_neighs,0]
         rxn_key = sys._get_rxn_key(site,lattice[site,1])
         species,new_species,new_site = rxn_key[rxn_ind]
         lattice[site,1] = species
@@ -285,31 +286,33 @@ _________        _________
         #                0  1   2  3  4 5 6  7 8   (9)
         # species 0-8 =  * CH3 CH2 CH C O OH H CO (OH2?)
         if type(counts) == np.ndarray:
+            if rxn_ind<6:
+                counts[lattice[site,0],species] -= 1; counts[lattice[new_site,0],species] += 1  # diffusions
             if {old_species}.issubset(set([1,2,3,4])):
                 if 6<=rxn_ind<=23:
                     counts[lattice[site,0],old_species-1] += 1; counts[lattice[site,0],old_species] -= 1 # H gain
-                    if rxn_ind<=11: counts[lattice[site,0],7] -= 1 # + *
-                    elif 11<rxn_ind<=17: counts[lattice[site,0],5] += 1; counts[lattice[site,0],6] -= 1 # + OH
-                    else: counts[lattice[site,0],6] += 1; counts[lattice[site,0],9] -= 1 # + OH2
+                    if rxn_ind<=11: counts[neigh_site_type,7] -= 1 # + *
+                    elif 11<rxn_ind<=17: counts[neigh_site_type,5] += 1; counts[neigh_site_type,6] -= 1 # + OH
+                    else: counts[neigh_site_type,6] += 1; counts[neigh_site_type,9] -= 1 # + OH2
             if {old_species}.issubset(set([1,2,3])):
                 if 24<=rxn_ind<=41:
                     counts[lattice[site,0],old_species+1] += 1; counts[lattice[site,0],old_species] -= 1 # H loss
-                    if rxn_ind<=29: counts[lattice[site,0],7] += 1 # *
-                    elif 29<rxn_ind<=35: counts[lattice[site,0],5] -= 1; counts[lattice[site,0],6] += 1 # + O
-                    else: counts[lattice[site,0],6] -= 1; counts[lattice[site,0],9] += 1 # + OH
-            if old_species == 4 and rxn_ind>23: counts[lattice[site,0],4] -= 1; counts[lattice[site,0],5] -= 1; counts[lattice[site,0],8] += 1 # CO formation
+                    if rxn_ind<=29: counts[neigh_site_type,7] += 1 # *
+                    elif 29<rxn_ind<=35: counts[neigh_site_type,5] -= 1; counts[neigh_site_type,6] += 1 # + O
+                    else: counts[neigh_site_type,6] -= 1; counts[neigh_site_type,9] += 1 # + OH
+            if old_species == 4 and rxn_ind>23: counts[lattice[site,0],4] -= 1; counts[neigh_site_type,5] -= 1; counts[lattice[site,0],8] += 1 # CO formation
             if old_species == 5 and 6<=rxn_ind<=17:
-                if rxn_ind<12: counts[lattice[site,0],5] -= 1; counts[lattice[site,0],7] -= 1; counts[lattice[site,0],6] += 1 # O-H gain
-                if rxn_ind>=12: counts[lattice[site,0],5] -= 2; counts[lattice[site,0],10] += 1 # O2 des
+                if rxn_ind<12: counts[lattice[site,0],5] -= 1; counts[neigh_site_type,7] -= 1; counts[lattice[site,0],6] += 1 # O-H gain
+                if rxn_ind>=12: counts[lattice[site,0],5] -= 1; counts[neigh_site_type,5] -= 1; counts[lattice[site,0],10] += 1 # O2 des
             if species == 6:
-                if rxn_ind<12: counts[lattice[site,0],6] -= 1; counts[lattice[site,0],7] -= 1; counts[lattice[site,0],9] += 1 # O-H gain
-                if rxn_ind>=12: counts[lattice[site,0],6] -= 1; counts[lattice[site,0],5] += 1; counts[lattice[site,0],7] += 1 # O-H loss
-            if species == 7 and rxn_ind>=6: counts[lattice[site,0],7] -= 2; counts[lattice[site,0],11] += 1 # H2 des
+                if rxn_ind<12: counts[lattice[site,0],6] -= 1; counts[neigh_site_type,7] -= 1; counts[lattice[site,0],9] += 1 # O-H gain
+                if rxn_ind>=12: counts[lattice[site,0],6] -= 1; counts[lattice[site,0],5] += 1; counts[neigh_site_type,7] += 1 # O-H loss
+            if species == 7 and rxn_ind>=6: counts[lattice[site,0],7] -= 1; counts[neigh_site_type,7] -= 1; counts[lattice[site,0],11] += 1 # H2 des
             if species == 8:
                 if 6<=rxn_ind<=11: counts[lattice[site,0],4] += 1; counts[lattice[site,0],5] += 1; counts[lattice[site,0],8] -= 1 # CO dssociations
                 if rxn_ind == 12: counts[lattice[site,0],13] += 1 # CO des
             if species == 9:
-                if 6<=rxn_ind<=11: counts[lattice[site,0],9] -= 1; counts[lattice[site,0],6] += 1; counts[lattice[site,0],7] += 1 # O-H loss
+                if 6<=rxn_ind<=11: counts[lattice[site,0],9] -= 1; counts[lattice[site,0],6] += 1; counts[neigh_site_type,7] += 1 # O-H loss
                 if rxn_ind == 12: counts[lattice[site,0],12] += 1 # OH2 des
         return lattice,new_site,counts
 
