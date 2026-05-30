@@ -601,7 +601,7 @@ _________        _________
     ### KMC algortihms ###
     ######################
 
-    def run_DM(sys,guess:str='TI',report:bool=False):
+    def run_DM(sys,guess:str='TI',report:bool=False,outfile:str=None):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the Direct method \n
         Returns a dict of time, temp, coverage and desorption rate \n
@@ -634,7 +634,7 @@ _________        _________
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_a,A,E_BEP),method=guess)
                 # Save state
-                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict)
+                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict,outfile)
                 # Advance system time
                 t = new_t
                 # Global prop gen
@@ -663,7 +663,7 @@ _________        _________
         print('DM runs complete')
         return data
     
-    def run_FRM(sys,guess:str='FRM',report:bool=False):
+    def run_FRM(sys,guess:str='FRM',report:bool=False,outfile:str=None):
         """Runs a kinetic Monte Carlo simulation on the defined lattice \n
         Uses the First reaction method \n
         Returns a dict of time, temp, coverage and desorption rate \n
@@ -689,7 +689,7 @@ _________        _________
                 new_t,site,rxn = queue[0]
                 if lat[site,1] == 0: raise ValueError('Selected empty site!')
                 # Save state
-                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict)
+                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict,outfile)
                 t = new_t
                 # Advance state and update queue + lateral interactions
                 lat,new_site,count = sys._rxn_step(lat,site,rxn,count)
@@ -1047,7 +1047,7 @@ _________        _________
     ### Data funcs ###
     ##################
     
-    def _save_state(sys,t:float,new_t:float,counter:np.ndarray,plot_ind:int,times:np.ndarray,temps:np.ndarray,pop_dict:dict):
+    def _save_state(sys,t:float,new_t:float,counter:np.ndarray,plot_ind:int,times:np.ndarray,temps:np.ndarray,pop_dict:dict,outfile:str=None):
         next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
         if new_t > next_save:
             while next_save<new_t and plot_ind<sys.t_points:
@@ -1059,6 +1059,14 @@ _________        _________
                         pop_dict[(s,i)][plot_ind] = counter[s,i]
                 next_save += sys.t_step # next time to save
                 plot_ind += 1 # next grid point
+                if outfile != None:
+                    np.savez(
+                        outfile,
+                        times=times,
+                        temps=temps
+                    )
+                    for key,arr in pop_dict.items():
+                        np.save(outfile+f'_site{key[0]}_spec{key[1]}',arr)
         return pop_dict,plot_ind
 
     def get_avg(sys,data):
