@@ -120,9 +120,9 @@ _________        _________
         for site in range(sys.n_sites):
             sys.E_a,sys.A = sys._kinetic_param_update(sys.lat,sys.E_a,sys.A,site,site)
             sys.E_BEP = sys._lateral_interactions_update(sys.E_BEP.copy(),sys.lat,site,site)
-            for species in range(1,10):
-                if sys.lat[site,1] == species:
-                    sys.counter[sys.lat[site,0],species] += 1
+            if sys.lat[site,1] != 0:
+                sys.counter[sys.lat[site,0],species] += 1
+        print('--- Initial Counts ---\n',sys.counter,'\n----------------------')
         out4 = f'Kinetic parameters saved in {np.shape(sys.E_a)[0]}x{np.shape(sys.E_a)[1]} array'
         # fancy message
         length = max([len(out1)+4,len(out2)+4,len(out3)+4,len(out4)+4])
@@ -270,14 +270,13 @@ _________        _________
             key_OH2.update({i+n_neighs : (neighs[i],{0}) for i in range(n_neighs)}) # O-H loss
             key_OH2.update({2*n_neighs:(site,set())}) # desorption
             return key_OH2
-        else: return set()
+        else: return {}
 
     def _rxn_step(sys,lattice:np.ndarray,site:int,rxn_ind:int,counts:np.ndarray)->tuple[np.ndarray,int,np.ndarray]:
         """Updates the lattice according to the chosen reaction \n
         returns the updated lattice
         """
         old_species = lattice[site,1]
-        neigh_site_type = lattice[rxn_ind % sys.n_neighs,0]
         rxn_key = sys._get_rxn_key(site,lattice[site,1])
         species,new_species,new_site = rxn_key[rxn_ind]
         lattice[site,1] = species
@@ -286,34 +285,36 @@ _________        _________
         #                0  1   2  3  4 5 6  7 8   (9)
         # species 0-8 =  * CH3 CH2 CH C O OH H CO (OH2?)
         if type(counts) == np.ndarray:
+            neigh_site_type = lattice[new_site,0]
+            old_site_type = lattice[site,0]
             if rxn_ind<6:
-                counts[lattice[site,0],species] -= 1; counts[lattice[new_site,0],species] += 1  # diffusions
+                counts[old_site_type,old_species] -= 1; counts[neigh_site_type,old_species] += 1  # diffusions
             if {old_species}.issubset(set([1,2,3,4])):
                 if 6<=rxn_ind<=23:
-                    counts[lattice[site,0],old_species-1] += 1; counts[lattice[site,0],old_species] -= 1 # H gain
+                    counts[old_site_type,old_species-1] += 1; counts[old_site_type,old_species] -= 1 # H gain
                     if rxn_ind<=11: counts[neigh_site_type,7] -= 1 # + *
                     elif 11<rxn_ind<=17: counts[neigh_site_type,5] += 1; counts[neigh_site_type,6] -= 1 # + OH
                     else: counts[neigh_site_type,6] += 1; counts[neigh_site_type,9] -= 1 # + OH2
             if {old_species}.issubset(set([1,2,3])):
                 if 24<=rxn_ind<=41:
-                    counts[lattice[site,0],old_species+1] += 1; counts[lattice[site,0],old_species] -= 1 # H loss
+                    counts[old_site_type,old_species+1] += 1; counts[old_site_type,old_species] -= 1 # H loss
                     if rxn_ind<=29: counts[neigh_site_type,7] += 1 # *
                     elif 29<rxn_ind<=35: counts[neigh_site_type,5] -= 1; counts[neigh_site_type,6] += 1 # + O
                     else: counts[neigh_site_type,6] -= 1; counts[neigh_site_type,9] += 1 # + OH
-            if old_species == 4 and rxn_ind>23: counts[lattice[site,0],4] -= 1; counts[neigh_site_type,5] -= 1; counts[lattice[site,0],8] += 1 # CO formation
+            if old_species == 4 and rxn_ind>23: counts[old_site_type,4] -= 1; counts[neigh_site_type,5] -= 1; counts[old_site_type,8] += 1 # CO formation
             if old_species == 5 and 6<=rxn_ind<=17:
-                if rxn_ind<12: counts[lattice[site,0],5] -= 1; counts[neigh_site_type,7] -= 1; counts[lattice[site,0],6] += 1 # O-H gain
-                if rxn_ind>=12: counts[lattice[site,0],5] -= 1; counts[neigh_site_type,5] -= 1; counts[lattice[site,0],10] += 1 # O2 des
-            if species == 6:
-                if rxn_ind<12: counts[lattice[site,0],6] -= 1; counts[neigh_site_type,7] -= 1; counts[lattice[site,0],9] += 1 # O-H gain
-                if rxn_ind>=12: counts[lattice[site,0],6] -= 1; counts[lattice[site,0],5] += 1; counts[neigh_site_type,7] += 1 # O-H loss
-            if species == 7 and rxn_ind>=6: counts[lattice[site,0],7] -= 1; counts[neigh_site_type,7] -= 1; counts[lattice[site,0],11] += 1 # H2 des
-            if species == 8:
-                if 6<=rxn_ind<=11: counts[lattice[site,0],4] += 1; counts[lattice[site,0],5] += 1; counts[lattice[site,0],8] -= 1 # CO dssociations
-                if rxn_ind == 12: counts[lattice[site,0],13] += 1 # CO des
-            if species == 9:
-                if 6<=rxn_ind<=11: counts[lattice[site,0],9] -= 1; counts[lattice[site,0],6] += 1; counts[neigh_site_type,7] += 1 # O-H loss
-                if rxn_ind == 12: counts[lattice[site,0],12] += 1 # OH2 des
+                if rxn_ind<12: counts[old_site_type,5] -= 1; counts[neigh_site_type,7] -= 1; counts[old_site_type,6] += 1 # O-H gain
+                if rxn_ind>=12: counts[old_site_type,5] -= 1; counts[neigh_site_type,5] -= 1; counts[old_site_type,10] += 1 # O2 des
+            if old_species == 6 and rxn_ind>=6:
+                if 6<=rxn_ind<12: counts[old_site_type,6] -= 1; counts[neigh_site_type,7] -= 1; counts[old_site_type,9] += 1 # O-H gain
+                if rxn_ind>=12: counts[old_site_type,6] -= 1; counts[old_site_type,5] += 1; counts[neigh_site_type,7] += 1 # O-H loss
+            if old_species == 7 and rxn_ind>=6: counts[old_site_type,7] -= 1; counts[neigh_site_type,7] -= 1; counts[old_site_type,11] += 1 # H2 des
+            if old_species == 8 and rxn_ind>=6:
+                if 6<=rxn_ind<=11: counts[old_site_type,4] += 1; counts[neigh_site_type,5] += 1; counts[old_site_type,8] -= 1 # CO dssociations
+                if rxn_ind == 12: counts[old_site_type,8] -= 1; counts[old_site_type,13] += 1 # CO des
+            if old_species == 9 and rxn_ind>=6:
+                if 6<=rxn_ind<=11: counts[old_site_type,9] -= 1; counts[old_site_type,6] += 1; counts[neigh_site_type,7] += 1 # O-H loss
+                if rxn_ind == 12: counts[old_site_type,9] -= 1; counts[old_site_type,12] += 1 # OH2 des
         return lattice,new_site,counts
 
     ########################################
@@ -383,7 +384,12 @@ _________        _________
         elif method == 'DM':
             # Setup improved FRM initial guess
             c,E_a,A,E_BEP = other_args
-            guess = time+self._DM_improved_guess(time,random_number,c,E_a,A,E_BEP)
+            try:
+                guess = time+self._DM_improved_guess(time,random_number,c,E_a,A,E_BEP)
+            except TypeError:
+                a0_t = prop_func(time,*other_args)
+                if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
+                guess = time-np.log(random_number)/a0_t
         elif method == 'TI':
             a0_t = prop_func(time,*other_args)
             if a0_t<=0: raise ValueError(f'Negative or zero propensity:\na0(t)={a0_t},t={time},r={random_number}\nother={other_args}') 
@@ -593,7 +599,7 @@ _________        _________
 
         C = Pre_exp * np.exp(-E_a/(k_B*sim_temp)) * (k_B*sim_temp**2)/E_a + beta*np.log(1/random_number)
         temp_guess = (E_a/k_B) / (2*lambertw(1/2*np.sqrt((Pre_exp*E_a)/(C*k_B))))
-        if np.imag(temp_guess) != 0: return ValueError('Complex valued initial guess!')
+        if not np.isclose(np.imag(temp_guess),0): return ValueError('Complex valued initial guess!')
         # lambertw returns complex types but k=0 branch is real valued for all z>-1/e so can safely ignore imaginary part
         return ((temp_guess - sim_temp)/(beta)).real
 
@@ -617,11 +623,11 @@ _________        _________
             guess,switch,switch_limit = 'DM',True,sys.switch_lim
         for run in range(sys.runs):
             #Initialise
-            lat = sys.lat.copy()
-            E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),sys.E_BEP.copy()
+            lat = copy.deepcopy(sys.lat)
+            E_a,A,E_BEP = copy.deepcopy(sys.E_a),copy.deepcopy(sys.A),copy.deepcopy(sys.E_BEP)
             c,c_count = sys._DM_gen_c_array(lat)
             t,n,site,new_site,plot_ind=0.0,0,0,0,0
-            count = sys.counter.copy()
+            count = copy.deepcopy(sys.counter)
             times = np.full((sys.t_points),fill_value=np.nan)
             temps = times.copy()
             pop_dict = {}
@@ -634,7 +640,7 @@ _________        _________
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_a,A,E_BEP),method=guess)
                 # Save state
-                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict,outfile)
+                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict,lat,outfile)
                 # Advance system time
                 t = new_t
                 # Global prop gen
@@ -673,10 +679,10 @@ _________        _________
         print(f'Starting FRM with {guess} guess scheme for {sys.runs} runs ...')
         data = {}
         for run in range(sys.runs):
-            lat = sys.lat.copy()
-            E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),sys.E_BEP.copy()
+            lat = copy.deepcopy(sys.lat)
+            E_a,A,E_BEP = copy.deepcopy(sys.E_a),copy.deepcopy(sys.A),copy.deepcopy(sys.E_BEP)
             t,n,plot_ind=0.0,0,0
-            count = sys.counter.copy()
+            count = copy.deepcopy(sys.counter)
             times = np.full((sys.t_points),fill_value=np.nan)
             temps = times.copy()
             pop_dict = {}
@@ -689,7 +695,7 @@ _________        _________
                 new_t,site,rxn = queue[0]
                 if lat[site,1] == 0: raise ValueError('Selected empty site!')
                 # Save state
-                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict,outfile)
+                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict,lat,outfile)
                 t = new_t
                 # Advance state and update queue + lateral interactions
                 lat,new_site,count = sys._rxn_step(lat,site,rxn,count)
@@ -934,7 +940,7 @@ _________        _________
             E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),E_BEP_initial.copy()
             c,c_count = sys._DM_gen_c_array(lat)
             t,n,site,new_site,plot_ind=0.0,0,0,0,0
-            count = sys.counter.copy()
+            count = copy.deepcopy(sys.counter)
             times = np.full((sys.t_points),fill_value=np.nan)
             temps = times.copy()
             pop_dict = {}
@@ -947,7 +953,7 @@ _________        _________
                 # Generate next time
                 new_t = sys._t_gen(sys._DM_total_prop,t,sys.rng.random(),other_args=(c,E_a,A,E_BEP),method=guess)
                 # Save state
-                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict)
+                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,lat,pop_dict)
                 # Advance system time
                 t = new_t
                 # Global prop gen
@@ -1005,7 +1011,7 @@ _________        _________
             lat = sys.lat.copy()
             E_a,A,E_BEP = sys.E_a.copy(),sys.A.copy(),E_BEP_initial.copy()
             t,n,plot_ind=0.0,0,0
-            count = sys.counter.copy()
+            count = copy.deepcopy(sys.counter)
             times = np.full((sys.t_points),fill_value=np.nan)
             temps = times.copy()
             pop_dict = {}
@@ -1019,7 +1025,7 @@ _________        _________
                 if len(queue)==0: print('Reactions complete (reaction queue empty)'); break
                 new_t,site,rxn = queue[0]
                 # Save state
-                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,pop_dict)
+                pop_dict,plot_ind = sys._save_state(t,new_t,count,plot_ind,times,temps,lat,pop_dict)
                 t = new_t
                 # Advance state and update queue + lateral interactions
                 lat,new_site,count = sys._rxn_step(lat,site,rxn,count)
@@ -1047,7 +1053,7 @@ _________        _________
     ### Data funcs ###
     ##################
     
-    def _save_state(sys,t:float,new_t:float,counter:np.ndarray,plot_ind:int,times:np.ndarray,temps:np.ndarray,pop_dict:dict,outfile:str=None):
+    def _save_state(sys,t:float,new_t:float,counter:np.ndarray,plot_ind:int,times:np.ndarray,temps:np.ndarray,pop_dict:dict,lattice:np.ndarray,outfile:str=None):
         next_save = (t-t%sys.t_step + sys.t_step) if t!=0 else 0
         if new_t > next_save:
             while next_save<new_t and plot_ind<sys.t_points:
@@ -1063,7 +1069,8 @@ _________        _________
                     np.savez(
                         outfile,
                         times=times,
-                        temps=temps
+                        temps=temps,
+                        lattice=lattice
                     )
                     for key,arr in pop_dict.items():
                         np.save(outfile+f'_site{key[0]}_spec{key[1]}',arr)
